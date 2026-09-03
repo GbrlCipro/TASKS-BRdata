@@ -3,7 +3,7 @@ import {
   Inbox, CheckSquare, Activity, Calendar, Building2, Users, Repeat,
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
-  Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles
+  Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone
 } from "lucide-react";
 
 /* ============================================================
@@ -13,8 +13,8 @@ import {
 const PRIORITIES = ["Baixa", "Média", "Alta", "Urgente"];
 const PRIORITY_COLOR = {
   Baixa: "#8B93A7",
-  Média: "#3E6FB0",
-  Alta: "#E08E2B",
+  Média: "#5C7FA6",
+  Alta: "#D9822B",
   Urgente: "#D64545",
 };
 const PRIORITY_DOT = {
@@ -143,6 +143,36 @@ function newHistoryEntry(text) {
 }
 
 /* ============================================================
+   NOTIFICATION BOOKKEEPING (localStorage puro, não vai pro Supabase)
+   ============================================================ */
+
+const NOTIF_LOG_KEY = "rotina-notified-log";
+const NOTIF_ENABLED_KEY = "rotina-notifications-enabled";
+
+function getNotifiedLog() {
+  try {
+    const raw = localStorage.getItem(NOTIF_LOG_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+function markNotified(taskId) {
+  try {
+    const log = getNotifiedLog();
+    log[taskId] = todayStr();
+    localStorage.setItem(NOTIF_LOG_KEY, JSON.stringify(log));
+  } catch (e) {}
+}
+function wasNotifiedToday(taskId) {
+  return getNotifiedLog()[taskId] === todayStr();
+}
+function getNotificationsEnabledPref() {
+  try { return localStorage.getItem(NOTIF_ENABLED_KEY) === "1"; } catch (e) { return false; }
+}
+function setNotificationsEnabledPref(val) {
+  try { localStorage.setItem(NOTIF_ENABLED_KEY, val ? "1" : "0"); } catch (e) {}
+}
+
+/* ============================================================
    STORAGE HOOK
    ============================================================ */
 
@@ -208,7 +238,7 @@ function PriorityBadge({ priority }) {
 function StatusPill({ status }) {
   const map = {
     "Pendente": "#8B93A7",
-    "Em andamento": "#3E6FB0",
+    "Em andamento": "#5C7FA6",
     "Concluída": "#2F9E5C",
     "Cancelada": "#B0B6C2",
   };
@@ -237,27 +267,27 @@ function IconBtn({ icon: Icon, onClick, title, danger }) {
    TASK CARD (used across views)
    ============================================================ */
 
-function TaskRow({ task, companies, people, onOpen, onQuickComplete }) {
+function TaskRow({ task, companies, people, onOpen, onQuickComplete, bulkMode, selected, onToggleSelect }) {
   const company = companies.find((c) => c.id === task.companyId);
   const person = people.find((p) => p.id === task.personId);
   const overdue = isOverdue(task);
   return (
-    <div className={`task-row ${task.status === "Concluída" ? "done" : ""}`} onClick={() => onOpen(task)}>
+    <div className={`task-row ${task.status === "Concluída" ? "done" : ""}`} onClick={() => bulkMode ? onToggleSelect(task.id) : onOpen(task)}>
       <button
-        className={`check-circle ${task.status === "Concluída" ? "checked" : ""}`}
-        onClick={(e) => { e.stopPropagation(); onQuickComplete(task); }}
-        title={task.status === "Concluída" ? "Reabrir" : "Concluir"}
+        className={`check-circle ${bulkMode ? (selected ? "checked" : "") : (task.status === "Concluída" ? "checked" : "")}`}
+        onClick={(e) => { e.stopPropagation(); bulkMode ? onToggleSelect(task.id) : onQuickComplete(task); }}
+        title={bulkMode ? (selected ? "Desmarcar" : "Selecionar") : (task.status === "Concluída" ? "Reabrir" : "Concluir")}
       >
-        {task.status === "Concluída" && <Check size={11} strokeWidth={3} />}
+        {(bulkMode ? selected : task.status === "Concluída") && <Check size={11} strokeWidth={3} />}
       </button>
       <div className="task-row-main">
+        {company && <div className="task-row-company">{company.name}</div>}
         <div className="task-row-title">
           {task.title}
           {task.recurringTemplateId && <Repeat size={12} className="inline-icon" />}
         </div>
         <div className="task-row-meta">
           {task.category && <span className="meta-chip">{task.category}</span>}
-          {company && <span className="meta-chip">{company.name}</span>}
           {person && <span className="meta-chip">{person.name}</span>}
           {task.dueDate && (
             <span className={`meta-chip ${overdue ? "meta-overdue" : ""}`}>
@@ -284,16 +314,23 @@ export default function App() {
   const [taskFormPrefill, setTaskFormPrefill] = useState(null);
   const [activityFormOpen, setActivityFormOpen] = useState(false);
   const [activityFormPrefill, setActivityFormPrefill] = useState(null);
-  const [recurringFormOpen, setRecurringFormOpen] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
   const [personModal, setPersonModal] = useState(null); // null | "new" | person object
   const [companyModal, setCompanyModal] = useState(null); // null | "new" | company object
+  const [recurringModal, setRecurringModal] = useState(null); // null | "new" | recurring object
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [inboxDraft, setInboxDraft] = useState("");
   const [companyFilter, setCompanyFilter] = useState(null);
   const [personFilter, setPersonFilter] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [profileTarget, setProfileTarget] = useState(null); // { type: "company"|"person", id }
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => getNotificationsEnabledPref());
+  const [notificationPermission, setNotificationPermission] = useState(() => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"));
+  const [bulkCompleteTarget, setBulkCompleteTarget] = useState(null); // array of task ids
   const recurringChecked = useRef(false);
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
   // ensure recurring instances exist (runs once after data loaded)
   useEffect(() => {
@@ -302,6 +339,96 @@ export default function App() {
     ensureRecurringInstances();
     // eslint-disable-next-line
   }, [loaded, data]);
+
+  // lembretes: verifica tarefas atrasadas/vencendo hoje e dispara notificação do navegador
+  useEffect(() => {
+    if (!loaded) return;
+    if (!notificationsEnabled || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+
+    function checkAndNotify() {
+      const d = dataRef.current;
+      if (!d) return;
+      const candidates = d.tasks.filter((t) =>
+        !t.inInbox && t.status !== "Concluída" && t.status !== "Cancelada" && t.dueDate && t.dueDate <= todayStr()
+      );
+      candidates.forEach((t) => {
+        if (wasNotifiedToday(t.id)) return;
+        const lateFlag = t.dueDate < todayStr();
+        try {
+          const n = new Notification(lateFlag ? "Tarefa atrasada" : "Tarefa de hoje", {
+            body: t.title,
+            tag: t.id,
+          });
+          n.onclick = () => {
+            window.focus();
+            setSelectedTask(t);
+          };
+        } catch (e) { /* navegador pode bloquear silenciosamente */ }
+        markNotified(t.id);
+      });
+    }
+
+    checkAndNotify();
+    const interval = setInterval(checkAndNotify, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [loaded, notificationsEnabled]);
+
+  // atalhos de teclado: N = nova tarefa, / = buscar, Esc = fechar o que estiver aberto
+  useEffect(() => {
+    function handleKeyDown(e) {
+      const tag = (e.target.tagName || "").toLowerCase();
+      const isTyping = tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable;
+
+      if (e.key === "Escape") {
+        if (selectedTask) { setSelectedTask(null); return; }
+        if (taskFormOpen) { setTaskFormOpen(false); setTaskFormPrefill(null); return; }
+        if (activityFormOpen) { setActivityFormOpen(false); setActivityFormPrefill(null); return; }
+        if (recurringModal) { setRecurringModal(null); return; }
+        if (personModal) { setPersonModal(null); return; }
+        if (companyModal) { setCompanyModal(null); return; }
+        if (completingTask) { setCompletingTask(null); return; }
+        if (bulkCompleteTarget) { setBulkCompleteTarget(null); return; }
+        if (searchOpen) { setSearchOpen(false); return; }
+        if (mobileNavOpen) { setMobileNavOpen(false); return; }
+        return;
+      }
+
+      if (isTyping) return;
+      const anyModalOpen = selectedTask || taskFormOpen || activityFormOpen || recurringModal || personModal || companyModal || completingTask || bulkCompleteTarget;
+      if (anyModalOpen) return;
+
+      if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setTaskFormPrefill(null);
+        setTaskFormOpen(true);
+      } else if (e.key === "/") {
+        e.preventDefault();
+        const el = document.getElementById("global-search-input");
+        if (el) el.focus();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedTask, taskFormOpen, activityFormOpen, recurringModal, personModal, companyModal, completingTask, bulkCompleteTarget, searchOpen, mobileNavOpen]);
+
+  function toggleNotifications() {
+    if (!notificationsEnabled) {
+      if (typeof Notification === "undefined") {
+        alert("Este navegador não suporta notificações.");
+        return;
+      }
+      Notification.requestPermission().then((perm) => {
+        setNotificationPermission(perm);
+        if (perm === "granted") {
+          setNotificationsEnabledPref(true);
+          setNotificationsEnabled(true);
+        }
+      });
+    } else {
+      setNotificationsEnabledPref(false);
+      setNotificationsEnabled(false);
+    }
+  }
 
   if (!loaded || !data) {
     return (
@@ -420,6 +547,24 @@ export default function App() {
     }
   }
 
+  function bulkCompleteTasks(ids, note) {
+    ids.forEach((id) => {
+      const t = data.tasks.find((x) => x.id === id);
+      if (t && t.status !== "Concluída") completeTask(t, note);
+    });
+  }
+
+  function bulkSetCategory(ids, category) {
+    update((d) => { d.tasks = d.tasks.map((t) => ids.includes(t.id) ? { ...t, category } : t); });
+  }
+
+  function bulkSetPriority(ids, priority) {
+    update((d) => { d.tasks = d.tasks.map((t) => ids.includes(t.id) ? { ...t, priority } : t); });
+  }
+
+  function bulkDeleteTasks(ids) {
+    update((d) => { d.tasks = d.tasks.filter((t) => !ids.includes(t.id)); });
+  }
 
   function rescheduleTask(task, newDate) {
     const old = task.dueDate;
@@ -562,6 +707,18 @@ export default function App() {
     ensureRecurringInstances();
   }
 
+  function patchRecurring(id, form) {
+    const rule = form.ruleType === "everyN" ? { type: "everyN", n: Number(form.ruleN) || 1 } : { type: form.ruleType };
+    update((d) => {
+      d.recurring = d.recurring.map((r) => r.id === id ? {
+        ...r,
+        title: form.title, description: form.description, category: form.category, priority: form.priority,
+        companyId: form.companyId, personId: form.personId, dueTime: form.dueTime,
+        rule, nextDueDate: form.occurrenceDate || r.nextDueDate,
+      } : r);
+    });
+  }
+
   function toggleRecurringActive(id) {
     update((d) => { d.recurring = d.recurring.map((r) => r.id === id ? { ...r, active: !r.active } : r); });
   }
@@ -621,22 +778,24 @@ export default function App() {
   return (
     <div className="app-root">
       <Style />
-      <aside className="sidebar">
+      {mobileNavOpen && <div className="mobile-nav-backdrop" onClick={() => setMobileNavOpen(false)} />}
+      <aside className={`sidebar ${mobileNavOpen ? "mobile-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark">
-            <img src="public\logo.png" alt="Logo BRData" />
+            <img src="/logo.png" alt="Logo BRData" />
           </div>
           <div className="brand-text">
             <div className="brand-title">Central de Rotina</div>
             <div className="brand-sub">BRData · Comercial</div>
           </div>
+          <X size={18} className="mobile-nav-close" onClick={() => setMobileNavOpen(false)} />
         </div>
         <nav className="nav">
           {NAV.map((n) => (
             <button
               key={n.id}
               className={`nav-item ${view === n.id ? "active" : ""}`}
-              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); }}
+              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); setMobileNavOpen(false); }}
             >
               <n.icon size={16} />
               <span>{n.label}</span>
@@ -652,9 +811,13 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
+          <button className="mobile-hamburger" onClick={() => setMobileNavOpen(true)} title="Menu">
+            <Menu size={18} />
+          </button>
           <div className="search-wrap">
             <Search size={15} />
             <input
+              id="global-search-input"
               placeholder="Buscar tarefas, atividades, empresas, pessoas…"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
@@ -711,6 +874,10 @@ export default function App() {
               companyFilter={companyFilter} personFilter={personFilter}
               onOpen={openTaskDetail} onQuickComplete={requestComplete}
               onNewTask={() => { setTaskFormPrefill(null); setTaskFormOpen(true); }}
+              onBulkComplete={(ids) => setBulkCompleteTarget(ids)}
+              onBulkSetCategory={bulkSetCategory}
+              onBulkSetPriority={bulkSetPriority}
+              onBulkDelete={bulkDeleteTasks}
             />
           )}
 
@@ -736,7 +903,7 @@ export default function App() {
               companies={data.companies} tasks={data.tasks} activities={data.activities} people={data.people}
               onNew={() => setCompanyModal("new")}
               onEdit={(c) => setCompanyModal(c)}
-              onSelect={(c) => { setCompanyFilter(c.id); setView("tasks"); }}
+              onSelect={(c) => { setProfileTarget({ type: "company", id: c.id }); setView("profile"); }}
             />
           )}
 
@@ -745,7 +912,48 @@ export default function App() {
               people={data.people} companies={data.companies} tasks={data.tasks} activities={data.activities}
               onNew={() => setPersonModal("new")}
               onEdit={(p) => setPersonModal(p)}
-              onSelect={(p) => { setPersonFilter(p.id); setView("tasks"); }}
+              onSelect={(p) => { setProfileTarget({ type: "person", id: p.id }); setView("profile"); }}
+            />
+          )}
+
+          {view === "profile" && profileTarget && (
+            <EntityProfile
+              target={profileTarget}
+              companies={data.companies} people={data.people} tasks={data.tasks} activities={data.activities}
+              onBack={() => setView(profileTarget.type === "company" ? "companies" : "people")}
+              onEdit={() => {
+                if (profileTarget.type === "company") {
+                  const c = data.companies.find((x) => x.id === profileTarget.id);
+                  if (c) setCompanyModal(c);
+                } else {
+                  const p = data.people.find((x) => x.id === profileTarget.id);
+                  if (p) setPersonModal(p);
+                }
+              }}
+              onOpenTask={openTaskDetail}
+              onQuickComplete={requestComplete}
+              onOpenRelated={(type, id) => setProfileTarget({ type, id })}
+              onSeeAllTasks={() => {
+                if (profileTarget.type === "company") setCompanyFilter(profileTarget.id);
+                else setPersonFilter(profileTarget.id);
+                setView("tasks");
+              }}
+              onNewTask={() => {
+                setTaskFormPrefill({
+                  companyId: profileTarget.type === "company" ? profileTarget.id : (data.people.find((p) => p.id === profileTarget.id)?.companyId || null),
+                  personId: profileTarget.type === "person" ? profileTarget.id : null,
+                  fromProfile: true,
+                });
+                setTaskFormOpen(true);
+              }}
+              onNewActivity={() => {
+                setActivityFormPrefill({
+                  companyId: profileTarget.type === "company" ? profileTarget.id : (data.people.find((p) => p.id === profileTarget.id)?.companyId || null),
+                  personId: profileTarget.type === "person" ? profileTarget.id : null,
+                  fromProfile: true,
+                });
+                setActivityFormOpen(true);
+              }}
             />
           )}
 
@@ -753,7 +961,8 @@ export default function App() {
             <RecurringView
               recurring={data.recurring} tasks={data.tasks}
               categories={data.categories} companies={data.companies} people={data.people}
-              onNew={() => setRecurringFormOpen(true)}
+              onNew={() => setRecurringModal("new")}
+              onEdit={(r) => setRecurringModal(r)}
               onToggle={toggleRecurringActive} onDelete={deleteRecurring}
             />
           )}
@@ -763,7 +972,12 @@ export default function App() {
           )}
 
           {view === "settings" && (
-            <SettingsView categories={data.categories} onAdd={addCategory} onRemove={removeCategory} />
+            <SettingsView
+              categories={data.categories} onAdd={addCategory} onRemove={removeCategory}
+              notificationsEnabled={notificationsEnabled}
+              notificationPermission={notificationPermission}
+              onToggleNotifications={toggleNotifications}
+            />
           )}
         </div>
       </main>
@@ -851,6 +1065,7 @@ export default function App() {
 
       {activityFormOpen && (
         <ActivityFormModal
+          prefill={activityFormPrefill}
           companies={data.companies} people={data.people} categories={data.categories}
           onClose={() => setActivityFormOpen(false)}
           onCreateCompany={upsertCompany}
@@ -859,21 +1074,27 @@ export default function App() {
             const a = { id: uid("a"), ...draft, createdAt: nowTs(), generatedTaskIds: [] };
             addActivity(a);
             setActivityFormOpen(false);
+            setActivityFormPrefill(null);
           }}
         />
       )}
 
-      {recurringFormOpen && (
+      {recurringModal && (
         <RecurringFormModal
+          editing={recurringModal === "new" ? null : recurringModal}
           companies={data.companies} people={data.people} categories={data.categories}
-          onClose={() => setRecurringFormOpen(false)}
+          onClose={() => setRecurringModal(null)}
           onSubmit={(draft) => {
-            const tpl = {
-              id: uid("rt"), ...draft, active: true,
-              nextDueDate: draft.firstDueDate || todayStr(),
-            };
-            addRecurring(tpl);
-            setRecurringFormOpen(false);
+            if (recurringModal === "new") {
+              const tpl = {
+                id: uid("rt"), ...draft, active: true,
+                nextDueDate: draft.occurrenceDate || todayStr(),
+              };
+              addRecurring(tpl);
+            } else {
+              patchRecurring(recurringModal.id, draft);
+            }
+            setRecurringModal(null);
           }}
         />
       )}
@@ -911,6 +1132,17 @@ export default function App() {
           onConfirm={(note) => {
             completeTask(completingTask, note);
             setCompletingTask(null);
+          }}
+        />
+      )}
+
+      {bulkCompleteTarget && (
+        <CompleteTaskModal
+          task={{ title: `${bulkCompleteTarget.length} tarefa(s) selecionada(s)` }}
+          onClose={() => setBulkCompleteTarget(null)}
+          onConfirm={(note) => {
+            bulkCompleteTasks(bulkCompleteTarget, note);
+            setBulkCompleteTarget(null);
           }}
         />
       )}
@@ -1043,11 +1275,15 @@ function InboxView({ items, draft, setDraft, onCapture, onProcess, onDelete }) {
    TASKS VIEW
    ============================================================ */
 
-function TasksView({ tasks, categories, companies, people, companyFilter, personFilter, onOpen, onQuickComplete, onNewTask }) {
+function TasksView({ tasks, categories, companies, people, companyFilter, personFilter, onOpen, onQuickComplete, onNewTask, onBulkComplete, onBulkSetCategory, onBulkSetPriority, onBulkDelete }) {
   const [status, setStatus] = useState("abertas");
   const [priority, setPriority] = useState("Todas");
   const [category, setCategory] = useState("Todas");
   const [q, setQ] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkCategoryPick, setBulkCategoryPick] = useState("");
+  const [bulkPriorityPick, setBulkPriorityPick] = useState("");
 
   let filtered = tasks;
   if (companyFilter) filtered = filtered.filter((t) => t.companyId === companyFilter);
@@ -1067,6 +1303,20 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
   const companyName = companyFilter ? companies.find((c) => c.id === companyFilter)?.name : null;
   const personName = personFilter ? people.find((p) => p.id === personFilter)?.name : null;
 
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function exitBulk() {
+    setBulkMode(false);
+    setSelectedIds(new Set());
+    setBulkCategoryPick("");
+    setBulkPriorityPick("");
+  }
+
   return (
     <div className="view">
       <div className="view-header">
@@ -1078,7 +1328,12 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
             {filtered.length} tarefa(s)
           </p>
         </div>
-        <button className="btn btn-primary" onClick={onNewTask}><Plus size={14} /> Nova tarefa</button>
+        <div className="task-header-actions">
+          <button className="btn btn-ghost" onClick={() => bulkMode ? exitBulk() : setBulkMode(true)}>
+            {bulkMode ? "Cancelar seleção" : "Selecionar"}
+          </button>
+          <button className="btn btn-primary" onClick={onNewTask}><Plus size={14} /> Nova tarefa</button>
+        </div>
       </div>
 
       <div className="filters-bar">
@@ -1100,9 +1355,53 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
         <input className="filters-search" placeholder="Buscar por título/observações…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
+      {bulkMode && (
+        <div className="bulk-bar">
+          <span className="bulk-count">{selectedIds.size} selecionada(s)</span>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setSelectedIds(new Set(filtered.map((t) => t.id)))}
+          >Selecionar todas da lista</button>
+          <div className="bulk-bar-spacer" />
+          <select value={bulkCategoryPick} onChange={(e) => setBulkCategoryPick(e.target.value)}>
+            <option value="">Categoria…</option>
+            {categories.map((c) => <option key={c}>{c}</option>)}
+          </select>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={!bulkCategoryPick || selectedIds.size === 0}
+            onClick={() => { onBulkSetCategory(Array.from(selectedIds), bulkCategoryPick); setBulkCategoryPick(""); }}
+          >Aplicar</button>
+          <select value={bulkPriorityPick} onChange={(e) => setBulkPriorityPick(e.target.value)}>
+            <option value="">Prioridade…</option>
+            {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+          </select>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={!bulkPriorityPick || selectedIds.size === 0}
+            onClick={() => { onBulkSetPriority(Array.from(selectedIds), bulkPriorityPick); setBulkPriorityPick(""); }}
+          >Aplicar</button>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => { onBulkComplete(Array.from(selectedIds)); exitBulk(); }}
+          ><Check size={13} /> Concluir</button>
+          <button
+            className="btn btn-ghost btn-sm bulk-delete-btn"
+            disabled={selectedIds.size === 0}
+            onClick={() => { if (confirm(`Excluir ${selectedIds.size} tarefa(s)? Essa ação não pode ser desfeita.`)) { onBulkDelete(Array.from(selectedIds)); exitBulk(); } }}
+          ><Trash2 size={13} /> Excluir</button>
+        </div>
+      )}
+
       <div className="task-list">
         {filtered.length === 0 && <EmptyState icon={CheckSquare} title="Nenhuma tarefa encontrada" hint="Ajuste os filtros ou crie uma nova tarefa." />}
-        {filtered.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
+        {filtered.map((t) => (
+          <TaskRow
+            key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete}
+            bulkMode={bulkMode} selected={selectedIds.has(t.id)} onToggleSelect={toggleSelect}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1269,10 +1568,134 @@ function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSel
 }
 
 /* ============================================================
+   ENTITY PROFILE (empresa ou pessoa — resumo + histórico)
+   ============================================================ */
+
+function EntityProfile({ target, companies, people, tasks, activities, onBack, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete }) {
+  const isCompany = target.type === "company";
+  const entity = isCompany ? companies.find((c) => c.id === target.id) : people.find((p) => p.id === target.id);
+
+  if (!entity) {
+    return (
+      <div className="view">
+        <button className="btn btn-ghost btn-sm" onClick={onBack}><ChevronLeft size={14} /> Voltar</button>
+        <EmptyState icon={isCompany ? Building2 : Users} title="Registro não encontrado" hint="Pode ter sido removido." />
+      </div>
+    );
+  }
+
+  const relatedCompany = !isCompany && entity.companyId ? companies.find((c) => c.id === entity.companyId) : null;
+  const relatedPeople = isCompany ? people.filter((p) => p.companyId === entity.id) : [];
+  const entityTasks = tasks.filter((t) => !t.inInbox && (isCompany ? t.companyId === entity.id : t.personId === entity.id));
+  const entityActivities = activities.filter((a) => isCompany ? a.companyId === entity.id : a.personId === entity.id);
+
+  const openTasks = entityTasks.filter((t) => t.status !== "Concluída" && t.status !== "Cancelada").sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+  const doneCount = entityTasks.filter((t) => t.status === "Concluída").length;
+  const overdueCount = entityTasks.filter(isOverdue).length;
+
+  const timelineEvents = [];
+  entityActivities.forEach((a) => timelineEvents.push({ date: a.createdAt, kind: "activity", data: a }));
+  entityTasks.forEach((t) => {
+    timelineEvents.push({ date: t.createdAt, kind: "task-created", data: t });
+    if (t.completedAt) timelineEvents.push({ date: t.completedAt, kind: "task-completed", data: t });
+  });
+  timelineEvents.sort((a, b) => b.date.localeCompare(a.date));
+
+  return (
+    <div className="view profile-view">
+      <button className="btn btn-ghost btn-sm profile-back" onClick={onBack}><ChevronLeft size={14} /> Voltar</button>
+
+      <div className="view-header">
+        <div>
+          <div className="profile-heading">
+            {isCompany ? <Building2 size={20} /> : <Users size={20} />}
+            <h1>{entity.name}</h1>
+          </div>
+          <p className="view-sub">
+            {isCompany
+              ? [entity.segment, entity.city].filter(Boolean).join(" · ") || "Empresa"
+              : [entity.role, relatedCompany?.name].filter(Boolean).join(" · ") || "Pessoa"}
+          </p>
+        </div>
+        <div className="profile-actions">
+          <button className="icon-btn" onClick={onEdit} title="Editar"><Edit2 size={14} /></button>
+        </div>
+      </div>
+
+      {!isCompany && relatedCompany && (
+        <div className="profile-company-chip" onClick={() => onOpenRelated("company", relatedCompany.id)}>
+          <Building2 size={12} /> {relatedCompany.name}
+        </div>
+      )}
+      {!isCompany && (entity.email || entity.phone) && (
+        <div className="profile-contact-row">
+          {entity.email && <span><Mail size={12} /> {entity.email}</span>}
+          {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
+        </div>
+      )}
+
+      <div className="profile-quick-actions">
+        <button className="btn btn-primary btn-sm" onClick={onNewTask}><Plus size={13} /> Nova tarefa</button>
+        <button className="btn btn-ghost btn-sm" onClick={onNewActivity}><Activity size={13} /> Nova atividade</button>
+        <button className="btn btn-ghost btn-sm" onClick={onSeeAllTasks}>Ver todas as tarefas</button>
+      </div>
+
+      <div className="stat-grid profile-stats">
+        <div className="stat-card"><div className="stat-value">{openTasks.length}</div><div className="stat-label">Tarefas abertas</div></div>
+        <div className="stat-card tone-danger"><div className="stat-value">{overdueCount}</div><div className="stat-label">Atrasadas</div></div>
+        <div className="stat-card tone-success"><div className="stat-value">{doneCount}</div><div className="stat-label">Concluídas</div></div>
+        <div className="stat-card"><div className="stat-value">{entityActivities.length}</div><div className="stat-label">Atividades</div></div>
+      </div>
+
+      {isCompany && relatedPeople.length > 0 && (
+        <div className="side-card profile-people">
+          <div className="side-card-head"><Users size={14} /> Pessoas nesta empresa</div>
+          <div className="profile-people-list">
+            {relatedPeople.map((p) => (
+              <div key={p.id} className="gen-chip" onClick={() => onOpenRelated("person", p.id)}>
+                {p.name}{p.role ? ` — ${p.role}` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="drawer-section-title">Tarefas em aberto</div>
+      <div className="task-list">
+        {openTasks.length === 0 && <EmptyState icon={CheckSquare} title="Nenhuma tarefa em aberto" />}
+        {openTasks.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpenTask} onQuickComplete={onQuickComplete} />)}
+      </div>
+
+      <div className="drawer-section-title">Linha do tempo</div>
+      <div className="timeline profile-timeline">
+        {timelineEvents.length === 0 && <div className="side-empty">Nada registrado ainda.</div>}
+        {timelineEvents.map((ev, i) => (
+          <div key={i} className={`timeline-item ${ev.kind === "task-completed" ? "completed" : ""}`}>
+            <div className="timeline-dot" />
+            <div className="timeline-content">
+              <div className="timeline-ts">{ev.date}</div>
+              {ev.kind === "activity" && (
+                <div className="timeline-text">Atividade: {ev.data.title}</div>
+              )}
+              {ev.kind === "task-created" && (
+                <div className="timeline-text timeline-clickable" onClick={() => onOpenTask(ev.data)}>Tarefa criada: {ev.data.title}</div>
+              )}
+              {ev.kind === "task-completed" && (
+                <div className="timeline-text timeline-clickable" onClick={() => onOpenTask(ev.data)}>Tarefa concluída: {ev.data.title}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    RECURRING VIEW
    ============================================================ */
 
-function RecurringView({ recurring, tasks, categories, companies, people, onNew, onToggle, onDelete }) {
+function RecurringView({ recurring, tasks, categories, companies, people, onNew, onEdit, onToggle, onDelete }) {
   return (
     <div className="view">
       <div className="view-header">
@@ -1302,6 +1725,7 @@ function RecurringView({ recurring, tasks, categories, companies, people, onNew,
               </div>
               <PriorityBadge priority={r.priority} />
               <button className="btn btn-ghost btn-sm" onClick={() => onToggle(r.id)}>{r.active ? "Pausar" : "Ativar"}</button>
+              <IconBtn icon={Edit2} onClick={() => onEdit(r)} title="Editar" />
               <IconBtn icon={Trash2} danger onClick={() => onDelete(r.id)} title="Excluir" />
             </div>
           );
@@ -1377,16 +1801,24 @@ function OverviewView({ tasks, categories }) {
    SETTINGS VIEW
    ============================================================ */
 
-function SettingsView({ categories, onAdd, onRemove }) {
+function SettingsView({ categories, onAdd, onRemove, notificationsEnabled, notificationPermission, onToggleNotifications }) {
   const [draft, setDraft] = useState("");
+
+  const permissionLabel = notificationPermission === "granted" ? "Permitido pelo navegador"
+    : notificationPermission === "denied" ? "Bloqueado nas configurações do navegador"
+    : notificationPermission === "unsupported" ? "Não suportado neste navegador"
+    : "Ainda não solicitado";
+
   return (
     <div className="view">
       <div className="view-header">
         <div>
           <h1>Configurações</h1>
-          <p className="view-sub">Personalize as categorias usadas em tarefas e atividades.</p>
+          <p className="view-sub">Personalize categorias, lembretes e veja os atalhos disponíveis.</p>
         </div>
       </div>
+
+      <div className="settings-section-title">Categorias</div>
       <div className="inline-add">
         <input
           placeholder="Nova categoria" value={draft}
@@ -1402,6 +1834,35 @@ function SettingsView({ categories, onAdd, onRemove }) {
             <X size={12} onClick={() => onRemove(c)} />
           </div>
         ))}
+      </div>
+
+      <div className="settings-section-title">Lembretes</div>
+      <div className="side-card">
+        <div className="settings-notif-row">
+          <div>
+            <div className="settings-notif-label">Notificações do navegador para tarefas atrasadas ou de hoje</div>
+            <div className="side-row-sub">{permissionLabel}</div>
+          </div>
+          <button
+            className={`btn btn-sm ${notificationsEnabled ? "btn-ghost" : "btn-primary"}`}
+            onClick={onToggleNotifications}
+            disabled={notificationPermission === "denied"}
+          >
+            {notificationsEnabled ? "Desativar" : "Ativar"}
+          </button>
+        </div>
+        <div className="next-step-hint">
+          Funciona enquanto este app estiver aberto em alguma aba do navegador — feche todas as abas e os lembretes param de disparar.
+          {notificationPermission === "denied" && " Você bloqueou notificações para este site anteriormente; para reativar, ajuste isso nas configurações do navegador."}
+        </div>
+      </div>
+
+      <div className="settings-section-title">Atalhos de teclado</div>
+      <div className="side-card">
+        <div className="shortcut-row"><kbd>N</kbd><span>Nova tarefa</span></div>
+        <div className="shortcut-row"><kbd>/</kbd><span>Focar na busca</span></div>
+        <div className="shortcut-row"><kbd>Esc</kbd><span>Fechar o que estiver aberto (modal, detalhe, busca, menu)</span></div>
+        <div className="next-step-hint">Não funcionam enquanto você está digitando em um campo de texto.</div>
       </div>
     </div>
   );
@@ -1581,7 +2042,7 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
                 </label>
                 <label>Subcategoria<input value={form.subcategory || ""} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
                 <label>Empresa
-                  <select value={form.companyId || ""} onChange={(e) => setForm({ ...form, companyId: e.target.value || null })}>
+                  <select value={form.companyId || ""} onChange={(e) => { const id = e.target.value || null; const keepPerson = people.find((p) => p.id === form.personId)?.companyId === id; setForm({ ...form, companyId: id, personId: keepPerson ? form.personId : null }); }}>
                     <option value="">—</option>
                     {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
@@ -1589,7 +2050,7 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
                 <label>Pessoa
                   <select value={form.personId || ""} onChange={(e) => setForm({ ...form, personId: e.target.value || null })}>
                     <option value="">—</option>
-                    {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {(form.companyId ? people.filter((p) => p.companyId === form.companyId) : people).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
               </div>
@@ -1695,6 +2156,8 @@ function EntityPicker({ label, options, value, onChange, onCreate, placeholder }
 function TaskFormModal({ prefill, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
   const base = prefill && prefill.inInbox ? prefill : prefill && prefill.fromActivity ? {
     title: "", companyId: prefill.fromActivity.companyId, personId: prefill.fromActivity.personId, category: prefill.fromActivity.category,
+  } : prefill && prefill.fromProfile ? {
+    title: "", companyId: prefill.companyId, personId: prefill.personId,
   } : {};
   const [form, setForm] = useState({
     title: base.title || "",
@@ -1755,8 +2218,8 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
             <label>Subcategoria<input value={form.subcategory} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
           </div>
           <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id })} onCreate={onCreateCompany} />
-            <EntityPicker label="Pessoa" options={people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} />
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
+            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
           <label>Observações<textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label>Anexos (link ou referência)<input value={form.attachmentsNote} onChange={(e) => setForm({ ...form, attachmentsNote: e.target.value })} /></label>
@@ -1803,8 +2266,12 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
    ACTIVITY FORM MODAL
    ============================================================ */
 
-function ActivityFormModal({ companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
-  const [form, setForm] = useState({ title: "", description: "", category: categories[0] || "", companyId: null, personId: null });
+function ActivityFormModal({ prefill, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
+  const [form, setForm] = useState({
+    title: "", description: "", category: categories[0] || "",
+    companyId: (prefill && prefill.companyId) || null,
+    personId: (prefill && prefill.personId) || null,
+  });
   function submit(e) {
     e.preventDefault();
     if (!form.title.trim()) return;
@@ -1827,8 +2294,8 @@ function ActivityFormModal({ companies, people, categories, onClose, onSubmit, o
             </select>
           </label>
           <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id })} onCreate={onCreateCompany} />
-            <EntityPicker label="Pessoa" options={people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} />
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
+            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
@@ -1925,11 +2392,13 @@ function CompanyFormModal({ editing, onClose, onSubmit }) {
    RECURRING FORM MODAL
    ============================================================ */
 
-function RecurringFormModal({ companies, people, categories, onClose, onSubmit }) {
+function RecurringFormModal({ editing, companies, people, categories, onClose, onSubmit }) {
   const [form, setForm] = useState({
-    title: "", description: "", category: categories[0] || "", priority: "Média",
-    companyId: null, personId: null, dueTime: "",
-    ruleType: "weekly", ruleN: 2, firstDueDate: todayStr(),
+    title: editing?.title || "", description: editing?.description || "",
+    category: editing?.category || categories[0] || "", priority: editing?.priority || "Média",
+    companyId: editing?.companyId || null, personId: editing?.personId || null, dueTime: editing?.dueTime || "",
+    ruleType: editing?.rule?.type || "weekly", ruleN: editing?.rule?.n || 2,
+    occurrenceDate: editing?.nextDueDate || todayStr(),
   });
   function submit(e) {
     e.preventDefault();
@@ -1938,14 +2407,14 @@ function RecurringFormModal({ companies, people, categories, onClose, onSubmit }
     onSubmit({
       title: form.title, description: form.description, category: form.category, priority: form.priority,
       companyId: form.companyId, personId: form.personId, dueTime: form.dueTime,
-      rule, firstDueDate: form.firstDueDate,
+      rule, occurrenceDate: form.occurrenceDate,
     });
   }
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>Nova tarefa recorrente</h3>
+          <h3>{editing ? "Editar recorrência" : "Nova tarefa recorrente"}</h3>
           <X size={16} onClick={onClose} />
         </div>
         <div className="modal-body">
@@ -1955,15 +2424,15 @@ function RecurringFormModal({ companies, people, categories, onClose, onSubmit }
             <label>Repetir
               <select value={form.ruleType} onChange={(e) => setForm({ ...form, ruleType: e.target.value })}>
                 <option value="daily">Todo dia</option>
-                <option value="weekly">Toda semana (mesmo dia da 1ª ocorrência)</option>
-                <option value="monthly">Todo mês (mesmo dia da 1ª ocorrência)</option>
+                <option value="weekly">Toda semana (mesmo dia da ocorrência abaixo)</option>
+                <option value="monthly">Todo mês (mesmo dia da ocorrência abaixo)</option>
                 <option value="everyN">A cada X dias</option>
               </select>
             </label>
             {form.ruleType === "everyN" && (
               <label>Intervalo (dias)<input type="number" min="1" value={form.ruleN} onChange={(e) => setForm({ ...form, ruleN: e.target.value })} /></label>
             )}
-            <label>Primeira ocorrência<input type="date" value={form.firstDueDate} onChange={(e) => setForm({ ...form, firstDueDate: e.target.value })} /></label>
+            <label>{editing ? "Próxima ocorrência" : "Primeira ocorrência"}<input type="date" value={form.occurrenceDate} onChange={(e) => setForm({ ...form, occurrenceDate: e.target.value })} /></label>
             <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
             <label>Prioridade
               <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
@@ -1978,12 +2447,15 @@ function RecurringFormModal({ companies, people, categories, onClose, onSubmit }
             </label>
           </div>
           <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id })} onCreate={() => null} />
-            <EntityPicker label="Pessoa" options={people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={() => null} />
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={() => null} />
+            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={() => null} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
+          {editing && (
+            <div className="next-step-hint">Editar aqui muda o modelo da recorrência e a próxima geração — tarefas já geradas anteriormente não são alteradas.</div>
+          )}
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>Criar recorrência</button>
+            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Criar recorrência"}</button>
           </div>
         </div>
       </div>
@@ -2048,12 +2520,14 @@ function Style() {
         --bg: #F5F6F9;
         --panel: #FFFFFF;
         --border: #E4E7EE;
-        --accent: #0F6E63;
-        --accent-soft: #0F6E6314;
+        --accent: #237CC0;
+        --accent-soft: #237CC014;
+        --brand-blue: #F08516;
+        --brand-blue-soft: #F0851614;
         --danger: #D64545;
-        --today: #E08E2B;
+        --today: #237CC0;
         --tomorrow: #C9A227;
-        --next: #3E6FB0;
+        --next: #F08516;
         --radius: 8px;
         --mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, monospace;
         --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2136,6 +2610,7 @@ function Style() {
       .check-circle { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #C7CDD8; background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; color: #fff; }
       .check-circle.checked { background: var(--accent); border-color: var(--accent); }
       .task-row-main { flex: 1; min-width: 0; }
+      .task-row-company { font-weight: 700; font-size: 11.5px; color: var(--accent); text-transform: uppercase; letter-spacing: .02em; margin-bottom: 2px; }
       .task-row-title { font-weight: 550; font-size: 13px; display: flex; align-items: center; gap: 6px; }
       .inline-icon { color: var(--ink-soft); }
       .task-row-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -2165,6 +2640,12 @@ function Style() {
       .filters-bar select, .filters-bar input { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12px; background: var(--panel); color: var(--ink); }
       .filters-search { flex: 1; min-width: 180px; }
       .task-list { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+      .task-header-actions { display: flex; gap: 8px; }
+      .bulk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 12px; margin-bottom: 12px; }
+      .bulk-bar select { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; background: var(--panel); }
+      .bulk-count { font-weight: 700; font-size: 12px; color: var(--accent); }
+      .bulk-bar-spacer { flex: 1; min-width: 6px; }
+      .bulk-delete-btn { color: var(--danger); }
 
       /* Activities */
       .activity-list { display: flex; flex-direction: column; gap: 10px; }
@@ -2224,6 +2705,12 @@ function Style() {
       .cat-list { display: flex; flex-wrap: wrap; gap: 8px; }
       .cat-chip { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); padding: 5px 10px; border-radius: 14px; font-size: 12px; }
       .cat-chip svg { cursor: pointer; color: var(--ink-soft); }
+      .settings-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); font-weight: 700; margin: 22px 0 8px; }
+      .settings-section-title:first-of-type { margin-top: 0; }
+      .settings-notif-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+      .settings-notif-label { font-size: 12.5px; font-weight: 600; }
+      .shortcut-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12.5px; }
+      .shortcut-row kbd { background: var(--bg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 2px 7px; font-family: var(--mono); font-size: 11px; min-width: 20px; text-align: center; }
 
       /* Search overlay */
       .search-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(20,24,34,0.05); }
@@ -2306,8 +2793,33 @@ function Style() {
       .entity-picker-item.create { color: var(--accent); font-weight: 600; }
       .entity-picker-close { width: 100%; margin-top: 4px; justify-content: center; }
 
+      .mobile-hamburger { display: none; border: 1px solid var(--border); background: var(--panel); border-radius: 7px; padding: 7px 9px; color: var(--ink); cursor: pointer; flex-shrink: 0; }
+      .mobile-nav-backdrop { display: none; }
+      .mobile-nav-close { display: none; cursor: pointer; color: var(--ink-soft); margin-left: auto; }
+
+      .profile-view { max-width: 760px; }
+      .profile-back { margin-bottom: 10px; }
+      .profile-heading { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); }
+      .profile-heading h1 { color: var(--ink); }
+      .profile-actions { display: flex; gap: 6px; }
+      .profile-company-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 12px; cursor: pointer; margin-bottom: 10px; width: fit-content; }
+      .profile-contact-row { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+      .profile-contact-row span { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); }
+      .profile-quick-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+      .profile-stats { margin-bottom: 18px; }
+      .profile-people { margin-bottom: 18px; }
+      .profile-people-list { display: flex; flex-wrap: wrap; gap: 6px; }
+      .timeline-clickable { cursor: pointer; }
+      .timeline-clickable:hover { text-decoration: underline; color: var(--accent); }
+      .timeline-item.completed .timeline-dot { background: #2F9E5C; }
+      .profile-timeline { margin-bottom: 10px; }
+
       @media (max-width: 860px) {
-        .sidebar { display: none; }
+        .sidebar { display: flex; position: fixed; top: 0; left: 0; bottom: 0; width: 260px; max-width: 82vw; z-index: 70; transform: translateX(-100%); transition: transform .22s ease; box-shadow: 8px 0 24px rgba(20,24,34,0.18); }
+        .sidebar.mobile-open { transform: translateX(0); }
+        .mobile-nav-backdrop { display: block; position: fixed; inset: 0; background: rgba(20,24,34,0.35); z-index: 65; }
+        .mobile-nav-close { display: block; }
+        .mobile-hamburger { display: inline-flex; }
         .rotina-grid { grid-template-columns: 1fr; }
         .drawer { width: 100%; }
         .search-panel { left: 14px; right: 14px; width: auto; }
