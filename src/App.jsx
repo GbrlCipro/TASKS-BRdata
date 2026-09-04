@@ -179,38 +179,20 @@ function setNotificationsEnabledPref(val) {
 function useAppData() {
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const saveTimer = useRef(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await window.storage.get(STORAGE_KEY, false);
-        if (res && res.value) {
-          const parsed = JSON.parse(res.value);
-          setData({ ...emptyData(), ...parsed });
-        } else {
-          setData(emptyData());
-        }
+        const fetched = await window.db.fetchAll();
+        setData({ ...emptyData(), ...fetched });
       } catch (e) {
+        console.error("Falha ao carregar dados", e);
         setData(emptyData());
       } finally {
         setLoaded(true);
       }
     })();
   }, []);
-
-  useEffect(() => {
-    if (!loaded || !data) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await window.storage.set(STORAGE_KEY, JSON.stringify(data), false);
-      } catch (e) {
-        console.error("Falha ao salvar", e);
-      }
-    }, 350);
-    return () => clearTimeout(saveTimer.current);
-  }, [data, loaded]);
 
   return [data, setData, loaded];
 }
@@ -458,8 +440,11 @@ export default function App() {
         const open = tasks.find((t) => t.recurringTemplateId === tpl.id && t.status !== "Concluída" && t.status !== "Cancelada");
         if (!open) {
           const due = tpl.nextDueDate || todayStr();
-          tasks.push(makeTaskFromTemplate(tpl, due));
+          const newTask = makeTaskFromTemplate(tpl, due);
+          tasks.push(newTask);
           tpl.nextDueDate = computeNextDate(tpl.rule, due);
+          window.db.insertTask(newTask).catch(console.error);
+          window.db.updateRecurring(tpl.id, { nextDueDate: tpl.nextDueDate }).catch(console.error);
         }
       });
       d.tasks = tasks;
@@ -495,21 +480,21 @@ export default function App() {
 
   function addTask(task) {
     update((d) => { d.tasks = [...d.tasks, task]; });
+    window.db.insertTask(task).catch(console.error);
   }
 
   function patchTask(id, patch, historyText) {
+    const current = data.tasks.find((t) => t.id === id);
+    const fullPatch = historyText ? { ...patch, history: [...(current?.history || []), newHistoryEntry(historyText)] } : patch;
     update((d) => {
-      d.tasks = d.tasks.map((t) => {
-        if (t.id !== id) return t;
-        const updated = { ...t, ...patch };
-        if (historyText) updated.history = [...(t.history || []), newHistoryEntry(historyText)];
-        return updated;
-      });
+      d.tasks = d.tasks.map((t) => t.id === id ? { ...t, ...fullPatch } : t);
     });
+    window.db.updateTask(id, fullPatch).catch(console.error);
   }
 
   function deleteTask(id) {
     update((d) => { d.tasks = d.tasks.filter((t) => t.id !== id); });
+    window.db.deleteTask(id).catch(console.error);
     setSelectedTask(null);
   }
 
@@ -531,8 +516,12 @@ export default function App() {
           const due = tpl.nextDueDate || computeNextDate(tpl.rule, task.dueDate);
           const exists = d.tasks.find((t) => t.recurringTemplateId === tpl.id && t.status !== "Concluída" && t.status !== "Cancelada");
           if (!exists) {
-            d.tasks = [...d.tasks, makeTaskFromTemplate(tpl, due)];
-            d.recurring = d.recurring.map((r) => r.id === tpl.id ? { ...r, nextDueDate: computeNextDate(r.rule, due) } : r);
+            const newTask = makeTaskFromTemplate(tpl, due);
+            const newNextDue = computeNextDate(tpl.rule, due);
+            d.tasks = [...d.tasks, newTask];
+            d.recurring = d.recurring.map((r) => r.id === tpl.id ? { ...r, nextDueDate: newNextDue } : r);
+            window.db.insertTask(newTask).catch(console.error);
+            window.db.updateRecurring(tpl.id, { nextDueDate: newNextDue }).catch(console.error);
           }
         }
       });
@@ -556,14 +545,17 @@ export default function App() {
 
   function bulkSetCategory(ids, category) {
     update((d) => { d.tasks = d.tasks.map((t) => ids.includes(t.id) ? { ...t, category } : t); });
+    ids.forEach((id) => window.db.updateTask(id, { category }).catch(console.error));
   }
 
   function bulkSetPriority(ids, priority) {
     update((d) => { d.tasks = d.tasks.map((t) => ids.includes(t.id) ? { ...t, priority } : t); });
+    ids.forEach((id) => window.db.updateTask(id, { priority }).catch(console.error));
   }
 
   function bulkDeleteTasks(ids) {
     update((d) => { d.tasks = d.tasks.filter((t) => !ids.includes(t.id)); });
+    ids.forEach((id) => window.db.deleteTask(id).catch(console.error));
   }
 
   function rescheduleTask(task, newDate) {
@@ -572,17 +564,24 @@ export default function App() {
   }
 
   function linkTasks(idA, idB) {
+    const taskA = data.tasks.find((t) => t.id === idA);
+    const taskB = data.tasks.find((t) => t.id === idB);
+    const relA = Array.from(new Set([...(taskA?.relatedTaskIds || []), idB]));
+    const relB = Array.from(new Set([...(taskB?.relatedTaskIds || []), idA]));
     update((d) => {
       d.tasks = d.tasks.map((t) => {
-        if (t.id === idA) return { ...t, relatedTaskIds: Array.from(new Set([...(t.relatedTaskIds || []), idB])) };
-        if (t.id === idB) return { ...t, relatedTaskIds: Array.from(new Set([...(t.relatedTaskIds || []), idA])) };
+        if (t.id === idA) return { ...t, relatedTaskIds: relA };
+        if (t.id === idB) return { ...t, relatedTaskIds: relB };
         return t;
       });
     });
+    window.db.updateTask(idA, { relatedTaskIds: relA }).catch(console.error);
+    window.db.updateTask(idB, { relatedTaskIds: relB }).catch(console.error);
   }
 
   function addActivity(activity) {
     update((d) => { d.activities = [...d.activities, activity]; });
+    window.db.insertActivity(activity).catch(console.error);
   }
 
   function generateTaskFromActivity(activity, taskDraft) {
@@ -610,9 +609,11 @@ export default function App() {
       history: [newHistoryEntry(`Criada a partir da atividade "${activity.title}".`)],
     };
     addTask(task);
+    const newGeneratedIds = [...(activity.generatedTaskIds || []), task.id];
     update((d) => {
-      d.activities = d.activities.map((a) => a.id === activity.id ? { ...a, generatedTaskIds: [...(a.generatedTaskIds || []), task.id] } : a);
+      d.activities = d.activities.map((a) => a.id === activity.id ? { ...a, generatedTaskIds: newGeneratedIds } : a);
     });
+    window.db.updateActivity(activity.id, { generatedTaskIds: newGeneratedIds }).catch(console.error);
     return task;
   }
 
@@ -642,7 +643,9 @@ export default function App() {
     const existing = data.companies.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
     if (existing) return existing.id;
     const id = uid("co");
-    update((d) => { d.companies = [...d.companies, { id, name: trimmed }]; });
+    const company = { id, name: trimmed };
+    update((d) => { d.companies = [...d.companies, company]; });
+    window.db.insertCompany(company).catch(console.error);
     return id;
   }
 
@@ -652,7 +655,9 @@ export default function App() {
     const existing = data.people.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
     if (existing) return existing.id;
     const id = uid("pe");
-    update((d) => { d.people = [...d.people, { id, name: trimmed, companyId: companyId || null, role: "", email: "", phone: "", notes: "" }]; });
+    const person = { id, name: trimmed, companyId: companyId || null, role: "", email: "", phone: "", notes: "" };
+    update((d) => { d.people = [...d.people, person]; });
+    window.db.insertPerson(person).catch(console.error);
     return id;
   }
 
@@ -665,28 +670,31 @@ export default function App() {
       role: form.role || "", email: form.email || "", phone: form.phone || "", notes: form.notes || "",
     };
     update((d) => { d.people = [...d.people, person]; });
+    window.db.insertPerson(person).catch(console.error);
     return id;
   }
 
   function patchPerson(id, form) {
+    const patch = {
+      name: (form.name || "").trim() || undefined,
+      role: form.role || "", companyId: form.companyId || null,
+      email: form.email || "", phone: form.phone || "", notes: form.notes || "",
+    };
     update((d) => {
-      d.people = d.people.map((p) => p.id === id ? {
-        ...p,
-        name: (form.name || "").trim() || p.name,
-        role: form.role || "", companyId: form.companyId || null,
-        email: form.email || "", phone: form.phone || "", notes: form.notes || "",
-      } : p);
+      d.people = d.people.map((p) => p.id === id ? { ...p, ...patch, name: patch.name || p.name } : p);
     });
+    window.db.updatePerson(id, patch).catch(console.error);
   }
 
   function patchCompany(id, form) {
+    const patch = {
+      name: (form.name || "").trim() || undefined,
+      segment: form.segment || "", city: form.city || "", notes: form.notes || "",
+    };
     update((d) => {
-      d.companies = d.companies.map((c) => c.id === id ? {
-        ...c,
-        name: (form.name || "").trim() || c.name,
-        segment: form.segment || "", city: form.city || "", notes: form.notes || "",
-      } : c);
+      d.companies = d.companies.map((c) => c.id === id ? { ...c, ...patch, name: patch.name || c.name } : c);
     });
+    window.db.updateCompany(id, patch).catch(console.error);
   }
 
   function upsertCompanyFull(form) {
@@ -698,42 +706,54 @@ export default function App() {
       return existing.id;
     }
     const id = uid("co");
-    update((d) => { d.companies = [...d.companies, { id, name: trimmed, segment: form.segment || "", city: form.city || "", notes: form.notes || "" }]; });
+    const company = { id, name: trimmed, segment: form.segment || "", city: form.city || "", notes: form.notes || "" };
+    update((d) => { d.companies = [...d.companies, company]; });
+    window.db.insertCompany(company).catch(console.error);
     return id;
   }
 
   function addRecurring(tpl) {
     update((d) => { d.recurring = [...d.recurring, tpl]; });
+    window.db.insertRecurring(tpl).catch(console.error);
     ensureRecurringInstances();
   }
 
   function patchRecurring(id, form) {
     const rule = form.ruleType === "everyN" ? { type: "everyN", n: Number(form.ruleN) || 1 } : { type: form.ruleType };
+    const current = data.recurring.find((r) => r.id === id);
+    const patch = {
+      title: form.title, description: form.description, category: form.category, priority: form.priority,
+      companyId: form.companyId, personId: form.personId, dueTime: form.dueTime,
+      rule, nextDueDate: form.occurrenceDate || current?.nextDueDate,
+    };
     update((d) => {
-      d.recurring = d.recurring.map((r) => r.id === id ? {
-        ...r,
-        title: form.title, description: form.description, category: form.category, priority: form.priority,
-        companyId: form.companyId, personId: form.personId, dueTime: form.dueTime,
-        rule, nextDueDate: form.occurrenceDate || r.nextDueDate,
-      } : r);
+      d.recurring = d.recurring.map((r) => r.id === id ? { ...r, ...patch } : r);
     });
+    window.db.updateRecurring(id, patch).catch(console.error);
   }
 
   function toggleRecurringActive(id) {
-    update((d) => { d.recurring = d.recurring.map((r) => r.id === id ? { ...r, active: !r.active } : r); });
+    const current = data.recurring.find((r) => r.id === id);
+    const nextActive = !(current?.active);
+    update((d) => { d.recurring = d.recurring.map((r) => r.id === id ? { ...r, active: nextActive } : r); });
+    window.db.updateRecurring(id, { active: nextActive }).catch(console.error);
   }
 
   function deleteRecurring(id) {
     update((d) => { d.recurring = d.recurring.filter((r) => r.id !== id); });
+    window.db.deleteRecurring(id).catch(console.error);
   }
 
   function addCategory(name) {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (data.categories.includes(trimmed)) return;
     update((d) => { if (!d.categories.includes(trimmed)) d.categories = [...d.categories, trimmed]; });
+    window.db.insertCategory(trimmed).catch(console.error);
   }
   function removeCategory(name) {
     update((d) => { d.categories = d.categories.filter((c) => c !== name); });
+    window.db.deleteCategory(name).catch(console.error);
   }
 
   /* ---------- derived ---------- */
@@ -2517,8 +2537,8 @@ function Style() {
       :root {
         --ink: #1C2230;
         --ink-soft: #545E70;
-        --bg: #F5F6F9;
-        --panel: #FFFFFF;
+        --bg: #f9f7f5;
+        --panel: #ffffff;
         --border: #E4E7EE;
         --accent: #237CC0;
         --accent-soft: #237CC014;

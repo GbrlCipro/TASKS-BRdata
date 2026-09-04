@@ -36,40 +36,79 @@ pode:
   Netlify, GitHub Pages, um servidor Nginx/Apache próprio, etc.), **ou**
 - Rodar `npm run preview` para servir a pasta `dist/` localmente.
 
-## Onde os dados ficam salvos
+## Onde os dados ficam salvos — Supabase (tabelas relacionais)
 
-Os dados (tarefas, atividades, empresas, pessoas, recorrências) ficam salvos
-no **localStorage do navegador** usado para acessar o app — ou seja, são
-locais daquele navegador/computador, não vão para nenhum servidor.
+Os dados ficam em tabelas próprias no Supabase — uma para cada tipo de
+informação: `rotina_tasks`, `rotina_activities`, `rotina_companies`,
+`rotina_people`, `rotina_categories`, `rotina_recurring`. Isso permite abrir
+o **Table Editor** do Supabase e consultar/filtrar diretamente, ou rodar
+SQL customizado no futuro (relatórios, indicadores, etc.) — diferente da
+versão anterior, que guardava tudo como um único JSON dentro de uma
+tabela genérica.
 
-Implicações práticas:
-- Se você limpar os dados de navegação do navegador, os dados do app somem.
-- Se abrir em outro navegador ou computador, começa vazio (não sincroniza).
-- Não há login nem múltiplos usuários nesta versão.
+### Configurar pela primeira vez
 
-Isso está isolado no arquivo `src/storage-shim.js`. Se no futuro você quiser
-migrar para um banco de dados de verdade (Postgres, Supabase, etc.) para ter
-acesso de qualquer dispositivo e backup automático, essa é a única peça que
-precisa ser trocada por chamadas a uma API — o restante do app
-(`src/App.jsx`) não precisa mudar.
+1. **Criar as tabelas** — no painel do Supabase, abra o **SQL Editor** e
+   rode o conteúdo do arquivo `supabase-migration.sql` (está na raiz deste
+   projeto). Esse script cria as seis tabelas listadas acima e, se você já
+   tinha usado a versão antiga (blob único em `rotina_app_storage`),
+   **migra automaticamente** os dados existentes para as tabelas novas —
+   é seguro rodar mesmo que essa tabela antiga não exista ou esteja vazia.
+
+2. **Pegar as credenciais** — em *Project Settings → API*, copie a
+   **Project URL** e a chave **anon public**.
+
+3. **Criar o arquivo `.env`** na raiz do projeto (copie de `.env.example`)
+   e preencha:
+
+   ```
+   VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
+   VITE_SUPABASE_ANON_KEY=sua-chave-anon-public-aqui
+   ```
+
+4. Rodar `npm install` (já inclui o `@supabase/supabase-js`) e
+   `npm run dev`.
+
+5. Criar uma tarefa no app e conferir no **Table Editor** do Supabase se
+   apareceu uma linha em `rotina_tasks`.
+
+### Como a persistência funciona por baixo dos panos
+
+`src/db-shim.js` expõe um objeto global `window.db` com um método por
+operação (`insertTask`, `updateTask`, `deleteTask`, `insertCompany` etc.).
+O `src/App.jsx` chama só esses métodos — ele não sabe (nem precisa saber)
+que por trás existe Supabase. Isso significa que, se um dia você quiser
+trocar de banco de dados ou adicionar uma API própria no meio do caminho,
+a única coisa que muda é `src/db-shim.js`.
+
+### Sobre a política de acesso (RLS)
+
+O SQL cria uma política que libera leitura/escrita para qualquer
+requisição que tenha a chave `anon` (pública por design, embutida no
+código do navegador). Para um sistema de uso pessoal/interno isso costuma
+ser aceitável. Se este app for ficar acessível publicamente na internet
+algum dia, o recomendado é adicionar autenticação e restringir a política
+ao usuário logado.
 
 ## Estrutura do projeto
 
 ```
 central-rotina/
-├── index.html          # página raiz
+├── index.html               # página raiz
 ├── package.json
 ├── vite.config.js
+├── supabase-migration.sql   # SQL: cria as tabelas + migra dados antigos
+├── .env.example
 └── src/
-    ├── main.jsx         # ponto de entrada React
-    ├── App.jsx          # aplicação inteira (telas, lógica, estilos)
-    └── storage-shim.js  # camada de persistência (localStorage)
+    ├── main.jsx             # ponto de entrada React
+    ├── App.jsx              # aplicação inteira (telas, lógica, estilos)
+    ├── supabaseClient.js    # cliente Supabase (lê o .env)
+    └── db-shim.js           # camada de dados: expõe window.db usando Supabase
 ```
 
 ## Próximos passos sugeridos
 
-- Trocar `storage-shim.js` por uma API real com banco de dados, se quiser
-  acessar de vários dispositivos.
 - Adicionar autenticação, caso mais de uma pessoa vá usar o mesmo sistema.
 - Evoluir para os recursos de CRM (funil, propostas, indicadores comerciais)
-  quando a rotina operacional já estiver consolidada.
+  quando a rotina operacional já estiver consolidada — agora que os dados
+  são relacionais, unir com as tabelas do CRM fica mais direto.

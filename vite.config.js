@@ -6,8 +6,5 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true,
-    allowedHosts: [
-      "bless-iodize-bakery.ngrok-free.dev"
-    ]
   },
 });
