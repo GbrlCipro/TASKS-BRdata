@@ -296,6 +296,7 @@ export default function App() {
   const [taskFormPrefill, setTaskFormPrefill] = useState(null);
   const [activityFormOpen, setActivityFormOpen] = useState(false);
   const [activityFormPrefill, setActivityFormPrefill] = useState(null);
+  const [editingActivity, setEditingActivity] = useState(null);
   const [completingTask, setCompletingTask] = useState(null);
   const [personModal, setPersonModal] = useState(null); // null | "new" | person object
   const [companyModal, setCompanyModal] = useState(null); // null | "new" | company object
@@ -365,6 +366,7 @@ export default function App() {
         if (selectedTask) { setSelectedTask(null); return; }
         if (taskFormOpen) { setTaskFormOpen(false); setTaskFormPrefill(null); return; }
         if (activityFormOpen) { setActivityFormOpen(false); setActivityFormPrefill(null); return; }
+        if (editingActivity) { setEditingActivity(null); return; }
         if (recurringModal) { setRecurringModal(null); return; }
         if (personModal) { setPersonModal(null); return; }
         if (companyModal) { setCompanyModal(null); return; }
@@ -376,7 +378,7 @@ export default function App() {
       }
 
       if (isTyping) return;
-      const anyModalOpen = selectedTask || taskFormOpen || activityFormOpen || recurringModal || personModal || companyModal || completingTask || bulkCompleteTarget;
+      const anyModalOpen = selectedTask || taskFormOpen || activityFormOpen || editingActivity || recurringModal || personModal || companyModal || completingTask || bulkCompleteTarget;
       if (anyModalOpen) return;
 
       if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -391,7 +393,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedTask, taskFormOpen, activityFormOpen, recurringModal, personModal, companyModal, completingTask, bulkCompleteTarget, searchOpen, mobileNavOpen]);
+  }, [selectedTask, taskFormOpen, activityFormOpen, editingActivity, recurringModal, personModal, companyModal, completingTask, bulkCompleteTarget, searchOpen, mobileNavOpen]);
 
   function toggleNotifications() {
     if (!notificationsEnabled) {
@@ -582,6 +584,20 @@ export default function App() {
   function addActivity(activity) {
     update((d) => { d.activities = [...d.activities, activity]; });
     window.db.insertActivity(activity).catch(console.error);
+  }
+
+  function patchActivity(id, form) {
+    const patch = {
+      title: (form.title || "").trim() || undefined,
+      description: form.description || "",
+      category: form.category || "",
+      companyId: form.companyId || null,
+      personId: form.personId || null,
+    };
+    update((d) => {
+      d.activities = d.activities.map((a) => a.id === id ? { ...a, ...patch, title: patch.title || a.title } : a);
+    });
+    window.db.updateActivity(id, patch).catch(console.error);
   }
 
   function generateTaskFromActivity(activity, taskDraft) {
@@ -906,6 +922,7 @@ export default function App() {
               activities={data.activities} companies={data.companies} people={data.people}
               tasks={data.tasks}
               onNew={() => { setActivityFormPrefill(null); setActivityFormOpen(true); }}
+              onEdit={(activity) => setEditingActivity(activity)}
               onGenerateTask={(activity) => { setActivityFormOpen(false); setTaskFormPrefill({ fromActivity: activity }); setTaskFormOpen(true); }}
               onOpenTask={openTaskDetail}
             />
@@ -1095,6 +1112,20 @@ export default function App() {
             addActivity(a);
             setActivityFormOpen(false);
             setActivityFormPrefill(null);
+          }}
+        />
+      )}
+
+      {editingActivity && (
+        <ActivityFormModal
+          editing={editingActivity}
+          companies={data.companies} people={data.people} categories={data.categories}
+          onClose={() => setEditingActivity(null)}
+          onCreateCompany={upsertCompany}
+          onCreatePerson={upsertPerson}
+          onSubmit={(draft) => {
+            patchActivity(editingActivity.id, draft);
+            setEditingActivity(null);
           }}
         />
       )}
@@ -1431,7 +1462,7 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
    ACTIVITIES VIEW
    ============================================================ */
 
-function ActivitiesView({ activities, companies, people, tasks, onNew, onGenerateTask, onOpenTask }) {
+function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, onGenerateTask, onOpenTask }) {
   const sorted = [...activities].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (
     <div className="view">
@@ -1460,9 +1491,12 @@ function ActivitiesView({ activities, companies, people, tasks, onNew, onGenerat
                     <span className="meta-chip"><Clock size={11} /> {a.createdAt}</span>
                   </div>
                 </div>
-                <button className="btn btn-ghost btn-sm" onClick={() => onGenerateTask(a)}>
-                  <ArrowUpRight size={13} /> Gerar tarefa
-                </button>
+                <div className="activity-card-actions">
+                  <IconBtn icon={Edit2} onClick={() => onEdit(a)} title="Editar" />
+                  <button className="btn btn-ghost btn-sm" onClick={() => onGenerateTask(a)}>
+                    <ArrowUpRight size={13} /> Gerar tarefa
+                  </button>
+                </div>
               </div>
               {a.description && <div className="activity-desc">{a.description}</div>}
               {generated.length > 0 && (
@@ -2286,11 +2320,13 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
    ACTIVITY FORM MODAL
    ============================================================ */
 
-function ActivityFormModal({ prefill, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
+function ActivityFormModal({ prefill, editing, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
   const [form, setForm] = useState({
-    title: "", description: "", category: categories[0] || "",
-    companyId: (prefill && prefill.companyId) || null,
-    personId: (prefill && prefill.personId) || null,
+    title: editing?.title || "",
+    description: editing?.description || "",
+    category: editing?.category || categories[0] || "",
+    companyId: editing ? (editing.companyId ?? null) : ((prefill && prefill.companyId) || null),
+    personId: editing ? (editing.personId ?? null) : ((prefill && prefill.personId) || null),
   });
   function submit(e) {
     e.preventDefault();
@@ -2301,7 +2337,7 @@ function ActivityFormModal({ prefill, companies, people, categories, onClose, on
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>Nova atividade</h3>
+          <h3>{editing ? "Editar atividade" : "Nova atividade"}</h3>
           <X size={16} onClick={onClose} />
         </div>
         <div className="modal-body">
@@ -2319,7 +2355,7 @@ function ActivityFormModal({ prefill, companies, people, categories, onClose, on
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>Registrar atividade</button>
+            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Registrar atividade"}</button>
           </div>
         </div>
       </div>
@@ -2537,8 +2573,8 @@ function Style() {
       :root {
         --ink: #1C2230;
         --ink-soft: #545E70;
-        --bg: #f9f7f5;
-        --panel: #ffffff;
+        --bg: #F5F6F9;
+        --panel: #FFFFFF;
         --border: #E4E7EE;
         --accent: #237CC0;
         --accent-soft: #237CC014;
@@ -2671,6 +2707,7 @@ function Style() {
       .activity-list { display: flex; flex-direction: column; gap: 10px; }
       .activity-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; }
       .activity-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+      .activity-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
       .activity-title { font-weight: 600; font-size: 13.5px; margin-bottom: 5px; }
       .activity-desc { margin-top: 8px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
       .activity-generated { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
