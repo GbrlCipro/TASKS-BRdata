@@ -24,6 +24,9 @@ const PRIORITY_DOT = {
   Urgente: "🔴",
 };
 const STATUSES = ["Pendente", "Em andamento", "Concluída", "Cancelada"];
+
+// Senha exigida para confirmar qualquer exclusão de registro. Troque o valor abaixo para alterar a senha.
+const ADMIN_DELETE_PASSWORD = "brdata2026";
 const DEFAULT_CATEGORIES = [
   "Comercial", "Administrativo", "Interno", "Financeiro",
   "Reuniões", "Documentação", "Acompanhamento", "Outros",
@@ -102,6 +105,43 @@ function isUpcoming(t) {
   return t.dueDate && t.dueDate > addDays(todayStr(), 1) && t.status !== "Concluída" && t.status !== "Cancelada";
 }
 
+/* ============================================================
+   SORT HELPERS (usados pelas listas: tarefas, atividades,
+   empresas, pessoas, recorrentes)
+   ============================================================ */
+function sortTasks(list, sortBy) {
+  const arr = [...list];
+  if (sortBy === "date") return arr.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+  if (sortBy === "date_desc") return arr.sort((a, b) => (b.dueDate || "0000").localeCompare(a.dueDate || "0000"));
+  if (sortBy === "title") return arr.sort((a, b) => (a.title || "").localeCompare(b.title || "", "pt-BR"));
+  if (sortBy === "priority") return arr.sort((a, b) => PRIORITIES.indexOf(b.priority) - PRIORITIES.indexOf(a.priority));
+  if (sortBy === "created") return arr.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return arr;
+}
+function sortByName(list) {
+  return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
+}
+function sortEntities(list, sortBy) {
+  // Empresas e pessoas não têm campo de data de criação — a ordem do array
+  // reflete a ordem de cadastro, então usamos isso como proxy de "mais recente".
+  if (sortBy === "name") return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
+  if (sortBy === "recent") return [...list].reverse();
+  return list; // "oldest" — ordem de cadastro original
+}
+function sortActivities(list, sortBy) {
+  const arr = [...list];
+  if (sortBy === "date") return arr.sort((a, b) => (b.date || b.createdAt || "").localeCompare(a.date || a.createdAt || ""));
+  if (sortBy === "date_asc") return arr.sort((a, b) => (a.date || a.createdAt || "").localeCompare(b.date || b.createdAt || ""));
+  if (sortBy === "title") return arr.sort((a, b) => (a.title || "").localeCompare(b.title || "", "pt-BR"));
+  return arr;
+}
+function sortRecurring(list, sortBy) {
+  const arr = [...list];
+  if (sortBy === "next") return arr.sort((a, b) => (a.nextDueDate || "9999").localeCompare(b.nextDueDate || "9999"));
+  if (sortBy === "title") return arr.sort((a, b) => (a.title || "").localeCompare(b.title || "", "pt-BR"));
+  return arr;
+}
+
 function computeNextDate(rule, fromDateStr) {
   const base = fromDateStr || todayStr();
   const d = parseLocalDate(base);
@@ -170,6 +210,29 @@ function getNotificationsEnabledPref() {
 }
 function setNotificationsEnabledPref(val) {
   try { localStorage.setItem(NOTIF_ENABLED_KEY, val ? "1" : "0"); } catch (e) {}
+}
+
+/* ============================================================
+   SORT PREFERENCE (persistida por lista, sobrevive a reload)
+   ============================================================ */
+const SORT_PREF_PREFIX = "rotina-sort-";
+
+function getSortPref(listKey, fallback) {
+  try {
+    const v = localStorage.getItem(SORT_PREF_PREFIX + listKey);
+    return v || fallback;
+  } catch (e) { return fallback; }
+}
+function setSortPref(listKey, value) {
+  try { localStorage.setItem(SORT_PREF_PREFIX + listKey, value); } catch (e) {}
+}
+function usePersistedSort(listKey, fallback) {
+  const [sortBy, setSortByState] = useState(() => getSortPref(listKey, fallback));
+  function setSortBy(value) {
+    setSortByState(value);
+    setSortPref(listKey, value);
+  }
+  return [sortBy, setSortBy];
 }
 
 /* ============================================================
@@ -311,9 +374,21 @@ export default function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => getNotificationsEnabledPref());
   const [notificationPermission, setNotificationPermission] = useState(() => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"));
   const [bulkCompleteTarget, setBulkCompleteTarget] = useState(null); // array of task ids
+  const [pendingDelete, setPendingDelete] = useState(null); // { kind, id, label }
   const recurringChecked = useRef(false);
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
+
+  // aplica o logo da empresa como favicon da aba
+  useEffect(() => {
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = "/logo.png";
+  }, []);
 
   // ensure recurring instances exist (runs once after data loaded)
   useEffect(() => {
@@ -560,6 +635,20 @@ export default function App() {
     ids.forEach((id) => window.db.deleteTask(id).catch(console.error));
   }
 
+  function requestDelete(kind, id, label) {
+    setPendingDelete({ kind, id, label });
+  }
+
+  function executeConfirmedDelete() {
+    if (!pendingDelete) return;
+    const { kind, id } = pendingDelete;
+    if (kind === "task" || kind === "inbox") deleteTask(id);
+    else if (kind === "tasks-bulk") bulkDeleteTasks(id);
+    else if (kind === "recurring") deleteRecurring(id);
+    else if (kind === "category") removeCategory(id);
+    setPendingDelete(null);
+  }
+
   function rescheduleTask(task, newDate) {
     const old = task.dueDate;
     patchTask(task.id, { dueDate: newDate }, `Prazo alterado de ${old ? formatDateBR(old) : "sem prazo"} para ${formatDateBR(newDate)}.`);
@@ -705,7 +794,9 @@ export default function App() {
   function patchCompany(id, form) {
     const patch = {
       name: (form.name || "").trim() || undefined,
-      segment: form.segment || "", city: form.city || "", notes: form.notes || "",
+      segment: form.segment || "", city: form.city || "",
+      address: form.address || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      notes: form.notes || "",
     };
     update((d) => {
       d.companies = d.companies.map((c) => c.id === id ? { ...c, ...patch, name: patch.name || c.name } : c);
@@ -722,7 +813,11 @@ export default function App() {
       return existing.id;
     }
     const id = uid("co");
-    const company = { id, name: trimmed, segment: form.segment || "", city: form.city || "", notes: form.notes || "" };
+    const company = {
+      id, name: trimmed, segment: form.segment || "", city: form.city || "",
+      address: form.address || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      notes: form.notes || "",
+    };
     update((d) => { d.companies = [...d.companies, company]; });
     window.db.insertCompany(company).catch(console.error);
     return id;
@@ -821,8 +916,8 @@ export default function App() {
             <img src="/logo.png" alt="Logo BRData" />
           </div>
           <div className="brand-text">
-            <div className="brand-title">Central de Rotina</div>
-            <div className="brand-sub">BRData · Comercial</div>
+            <div className="brand-title">BRdata Tecnologia</div>
+            <div className="brand-sub">Central de Rotina</div>
           </div>
           <X size={18} className="mobile-nav-close" onClick={() => setMobileNavOpen(false)} />
         </div>
@@ -898,7 +993,7 @@ export default function App() {
               items={inboxItems} draft={inboxDraft} setDraft={setInboxDraft}
               onCapture={addInboxItem}
               onProcess={(task) => { setTaskFormPrefill(task); setTaskFormOpen(true); }}
-              onDelete={deleteTask}
+              onDelete={(id) => requestDelete("inbox", id, "Excluir este item da caixa de entrada? Essa ação não pode ser desfeita.")}
             />
           )}
 
@@ -913,7 +1008,7 @@ export default function App() {
               onBulkComplete={(ids) => setBulkCompleteTarget(ids)}
               onBulkSetCategory={bulkSetCategory}
               onBulkSetPriority={bulkSetPriority}
-              onBulkDelete={bulkDeleteTasks}
+              onBulkDelete={(ids) => requestDelete("tasks-bulk", ids, `Excluir ${ids.length} tarefa(s)? Essa ação não pode ser desfeita.`)}
             />
           )}
 
@@ -1000,7 +1095,7 @@ export default function App() {
               categories={data.categories} companies={data.companies} people={data.people}
               onNew={() => setRecurringModal("new")}
               onEdit={(r) => setRecurringModal(r)}
-              onToggle={toggleRecurringActive} onDelete={deleteRecurring}
+              onToggle={toggleRecurringActive} onDelete={(id) => requestDelete("recurring", id, "Excluir esta tarefa recorrente? Essa ação não pode ser desfeita.")}
             />
           )}
 
@@ -1010,7 +1105,7 @@ export default function App() {
 
           {view === "settings" && (
             <SettingsView
-              categories={data.categories} onAdd={addCategory} onRemove={removeCategory}
+              categories={data.categories} onAdd={addCategory} onRemove={(name) => requestDelete("category", name, `Excluir a categoria "${name}"? Tarefas que usam essa categoria não serão apagadas.`)}
               notificationsEnabled={notificationsEnabled}
               notificationPermission={notificationPermission}
               onToggleNotifications={toggleNotifications}
@@ -1031,7 +1126,7 @@ export default function App() {
           onPatch={patchTask}
           onComplete={requestComplete}
           onReschedule={rescheduleTask}
-          onDelete={deleteTask}
+          onDelete={(id) => requestDelete("task", id, "Excluir esta tarefa? Essa ação não pode ser desfeita.")}
           onLink={linkTasks}
           onOpenTask={(t) => setSelectedTask(t)}
           onCreateFollowUp={(draft) => {
@@ -1167,6 +1262,8 @@ export default function App() {
       {companyModal && (
         <CompanyFormModal
           editing={companyModal === "new" ? null : companyModal}
+          people={data.people}
+          onCreatePerson={upsertPerson}
           onClose={() => setCompanyModal(null)}
           onSubmit={(form) => {
             if (companyModal === "new") upsertCompanyFull(form);
@@ -1195,6 +1292,14 @@ export default function App() {
             bulkCompleteTasks(bulkCompleteTarget, note);
             setBulkCompleteTarget(null);
           }}
+        />
+      )}
+
+      {pendingDelete && (
+        <AdminPasswordModal
+          message={pendingDelete.label}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={executeConfirmedDelete}
         />
       )}
     </div>
@@ -1335,6 +1440,7 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryPick, setBulkCategoryPick] = useState("");
   const [bulkPriorityPick, setBulkPriorityPick] = useState("");
+  const [sortBy, setSortBy] = usePersistedSort("tasks", "date");
 
   let filtered = tasks;
   if (companyFilter) filtered = filtered.filter((t) => t.companyId === companyFilter);
@@ -1349,7 +1455,7 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
     const lq = q.toLowerCase();
     filtered = filtered.filter((t) => t.title.toLowerCase().includes(lq) || (t.notes || "").toLowerCase().includes(lq));
   }
-  filtered = [...filtered].sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+  filtered = sortTasks(filtered, sortBy);
 
   const companyName = companyFilter ? companies.find((c) => c.id === companyFilter)?.name : null;
   const personName = personFilter ? people.find((p) => p.id === personFilter)?.name : null;
@@ -1404,6 +1510,13 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
           {categories.map((c) => <option key={c}>{c}</option>)}
         </select>
         <input className="filters-search" placeholder="Buscar por título/observações…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="date">Prazo (mais próximo)</option>
+          <option value="date_desc">Prazo (mais distante)</option>
+          <option value="title">Nome (A-Z)</option>
+          <option value="priority">Prioridade (maior primeiro)</option>
+          <option value="created">Criação (mais recente)</option>
+        </select>
       </div>
 
       {bulkMode && (
@@ -1440,7 +1553,7 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
           <button
             className="btn btn-ghost btn-sm bulk-delete-btn"
             disabled={selectedIds.size === 0}
-            onClick={() => { if (confirm(`Excluir ${selectedIds.size} tarefa(s)? Essa ação não pode ser desfeita.`)) { onBulkDelete(Array.from(selectedIds)); exitBulk(); } }}
+            onClick={() => { onBulkDelete(Array.from(selectedIds)); exitBulk(); }}
           ><Trash2 size={13} /> Excluir</button>
         </div>
       )}
@@ -1463,7 +1576,8 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
    ============================================================ */
 
 function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, onGenerateTask, onOpenTask }) {
-  const sorted = [...activities].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const [sortBy, setSortBy] = usePersistedSort("activities", "date");
+  const sorted = sortActivities(activities, sortBy);
   return (
     <div className="view">
       <div className="view-header">
@@ -1472,6 +1586,14 @@ function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, o
           <p className="view-sub">Registro do que já aconteceu — a base do seu histórico.</p>
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova atividade</button>
+      </div>
+
+      <div className="filters-bar">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="date">Mais recentes primeiro</option>
+          <option value="date_asc">Mais antigas primeiro</option>
+          <option value="title">Nome (A-Z)</option>
+        </select>
       </div>
 
       <div className="activity-list">
@@ -1552,6 +1674,8 @@ function AgendaView({ tasks, companies, people, onOpen, onQuickComplete }) {
    ============================================================ */
 
 function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, onSelect }) {
+  const [sortBy, setSortBy] = usePersistedSort("companies", "recent");
+  const sorted = sortEntities(companies, sortBy);
   return (
     <div className="view">
       <div className="view-header">
@@ -1561,12 +1685,19 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova empresa</button>
       </div>
+      <div className="filters-bar">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="recent">Mais recentes primeiro</option>
+          <option value="name">Nome (A-Z)</option>
+        </select>
+      </div>
       <div className="grid-cards">
         {companies.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa cadastrada" hint="Cadastre os clientes, fornecedores e parceiros que aparecem na sua rotina." />}
-        {companies.map((c) => {
+        {sorted.map((c) => {
           const tCount = tasks.filter((t) => t.companyId === c.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
           const aCount = activities.filter((a) => a.companyId === c.id).length;
           const pCount = people.filter((p) => p.companyId === c.id).length;
+          const contact = c.contactPersonId ? people.find((p) => p.id === c.contactPersonId) : null;
           return (
             <div key={c.id} className="entity-card" onClick={() => onSelect(c)}>
               <div className="entity-card-head">
@@ -1575,6 +1706,13 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
               </div>
               {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
               <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
+              {(contact || c.address || c.phone) && (
+                <div className="entity-contact">
+                  {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
+                  {c.phone && <span><Phone size={11} /> {c.phone}</span>}
+                  {c.address && <span>{c.address}</span>}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1584,6 +1722,8 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
 }
 
 function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSelect }) {
+  const [sortBy, setSortBy] = usePersistedSort("people", "recent");
+  const sorted = sortEntities(people, sortBy);
   return (
     <div className="view">
       <div className="view-header">
@@ -1593,9 +1733,15 @@ function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSel
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova pessoa</button>
       </div>
+      <div className="filters-bar">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="recent">Mais recentes primeiro</option>
+          <option value="name">Nome (A-Z)</option>
+        </select>
+      </div>
       <div className="grid-cards">
         {people.length === 0 && <EmptyState icon={Users} title="Nenhuma pessoa cadastrada" hint="Cadastre os contatos que aparecem na sua rotina — clientes, fornecedores, colegas." />}
-        {people.map((p) => {
+        {sorted.map((p) => {
           const company = companies.find((c) => c.id === p.companyId);
           const tCount = tasks.filter((t) => t.personId === p.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
           const aCount = activities.filter((a) => a.personId === p.id).length;
@@ -1687,6 +1833,17 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
         </div>
       )}
+      {isCompany && (entity.phone || entity.address) && (
+        <div className="profile-contact-row">
+          {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
+          {entity.address && <span>{entity.address}</span>}
+        </div>
+      )}
+      {isCompany && entity.contactPersonId && people.find((p) => p.id === entity.contactPersonId) && (
+        <div className="profile-company-chip" onClick={() => onOpenRelated("person", entity.contactPersonId)}>
+          <Users size={12} /> Contato: {people.find((p) => p.id === entity.contactPersonId).name}
+        </div>
+      )}
 
       <div className="profile-quick-actions">
         <button className="btn btn-primary btn-sm" onClick={onNewTask}><Plus size={13} /> Nova tarefa</button>
@@ -1750,6 +1907,8 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
    ============================================================ */
 
 function RecurringView({ recurring, tasks, categories, companies, people, onNew, onEdit, onToggle, onDelete }) {
+  const [sortBy, setSortBy] = usePersistedSort("recurring", "next");
+  const sorted = sortRecurring(recurring, sortBy);
   return (
     <div className="view">
       <div className="view-header">
@@ -1759,9 +1918,15 @@ function RecurringView({ recurring, tasks, categories, companies, people, onNew,
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova recorrência</button>
       </div>
+      <div className="filters-bar">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="next">Próxima ocorrência</option>
+          <option value="title">Nome (A-Z)</option>
+        </select>
+      </div>
       <div className="task-list">
         {recurring.length === 0 && <EmptyState icon={Repeat} title="Nenhuma recorrência cadastrada" hint='Ex: "Enviar relatório semanal", toda sexta-feira.' />}
-        {recurring.map((r) => {
+        {sorted.map((r) => {
           const company = companies.find((c) => c.id === r.companyId);
           const openCount = tasks.filter((t) => t.recurringTemplateId === r.id).length;
           return (
@@ -2011,7 +2176,7 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
             <PriorityBadge priority={task.priority} />
             <div className="spacer" />
             <IconBtn icon={editing ? Check : Edit2} onClick={() => editing ? saveEdit() : setEditing(true)} title={editing ? "Salvar" : "Editar"} />
-            <IconBtn icon={Trash2} danger onClick={() => { if (confirm("Excluir esta tarefa?")) onDelete(task.id); }} title="Excluir" />
+            <IconBtn icon={Trash2} danger onClick={() => onDelete(task.id)} title="Excluir" />
             <IconBtn icon={X} onClick={onClose} title="Fechar" />
           </div>
           {!editing ? (
@@ -2085,8 +2250,11 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
                 </label>
                 <label>Status
                   <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                    {STATUSES.map((s) => <option key={s}>{s}</option>)}
+                    {STATUSES.filter((s) => s !== "Concluída" || task.status === "Concluída").map((s) => <option key={s}>{s}</option>)}
                   </select>
+                  {task.status !== "Concluída" && (
+                    <span className="field-hint">Para concluir, use o botão "Concluir" (pede a descrição da execução).</span>
+                  )}
                 </label>
                 <label>Categoria
                   <select value={form.category || ""} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -2409,9 +2577,12 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
    COMPANY FORM MODAL
    ============================================================ */
 
-function CompanyFormModal({ editing, onClose, onSubmit }) {
+function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }) {
   const [form, setForm] = useState({
-    name: editing?.name || "", segment: editing?.segment || "", city: editing?.city || "", notes: editing?.notes || "",
+    name: editing?.name || "", segment: editing?.segment || "", city: editing?.city || "",
+    address: editing?.address || "", phone: editing?.phone || "",
+    contactPersonId: editing?.contactPersonId || null,
+    notes: editing?.notes || "",
   });
 
   function submit(e) {
@@ -2432,6 +2603,18 @@ function CompanyFormModal({ editing, onClose, onSubmit }) {
           <div className="edit-grid">
             <label>Segmento<input placeholder="Ex: Varejo, Indústria…" value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} /></label>
             <label>Cidade<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label>
+          </div>
+          <label>Endereço<input placeholder="Rua, número, bairro…" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label>
+          <div className="edit-grid">
+            <label>Telefone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
+            <EntityPicker
+              label="Pessoa de contato"
+              options={people}
+              value={form.contactPersonId}
+              onChange={(id) => setForm({ ...form, contactPersonId: id })}
+              onCreate={(name) => onCreatePerson(name, null)}
+              placeholder="Selecionar…"
+            />
           </div>
           <label>Observações<textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <div className="modal-footer">
@@ -2564,6 +2747,56 @@ function CompleteTaskModal({ task, onClose, onConfirm }) {
 }
 
 /* ============================================================
+   ADMIN PASSWORD MODAL (exigido para qualquer exclusão)
+   ============================================================ */
+
+function AdminPasswordModal({ message, onCancel, onConfirm }) {
+  const [pwd, setPwd] = useState("");
+  const [error, setError] = useState("");
+
+  function submit() {
+    if (pwd === ADMIN_DELETE_PASSWORD) {
+      onConfirm();
+    } else {
+      setError("Senha incorreta.");
+      setPwd("");
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Confirmar exclusão</h3>
+          <X size={16} onClick={onCancel} />
+        </div>
+        <div className="modal-body">
+          <div className="complete-task-title">{message}</div>
+          <label>
+            <span>Senha de administrador</span>
+            <input
+              type="password"
+              autoFocus
+              value={pwd}
+              onChange={(e) => { setPwd(e.target.value); setError(""); }}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+              placeholder="Digite a senha para confirmar"
+            />
+          </label>
+          {error && <div className="field-error">{error}</div>}
+          <div className="modal-footer">
+            <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+            <button type="button" className="btn btn-danger" onClick={submit}>
+              <Trash2 size={13} /> Excluir
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    STYLE
    ============================================================ */
 
@@ -2631,6 +2864,8 @@ function Style() {
       .btn-primary:hover { background: #0C5A51; }
       .btn-ghost { background: var(--panel); color: var(--ink); border-color: var(--border); }
       .btn-ghost:hover { background: var(--bg); }
+      .btn-danger { background: var(--danger); color: #fff; }
+      .btn-danger:hover { background: #C23B3B; }
       .btn-sm { padding: 5px 9px; font-size: 11.5px; }
       .icon-btn { border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 5px 6px; cursor: pointer; color: var(--ink-soft); display: flex; }
       .icon-btn:hover { background: var(--bg); color: var(--ink); }
@@ -2729,7 +2964,8 @@ function Style() {
       .entity-name { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
       .entity-stats { font-size: 11px; color: var(--ink-soft); }
       .entity-role { font-size: 11.5px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
-      .entity-contact { display: flex; flex-direction: column; gap: 1px; font-size: 10.5px; color: var(--ink-soft); font-family: var(--mono); margin-top: 6px; }
+      .entity-contact { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--ink-soft); font-family: var(--mono); margin-top: 6px; }
+      .entity-contact span { display: inline-flex; align-items: center; gap: 4px; }
       .entity-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
       .entity-card-head .entity-name { margin-bottom: 0; }
       .entity-edit-btn { opacity: 0; flex-shrink: 0; }
@@ -2778,8 +3014,8 @@ function Style() {
       .search-item:hover { background: var(--bg); }
 
       /* Drawer (task detail) */
-      .drawer-overlay { position: fixed; inset: 0; background: rgba(20,24,34,0.28); z-index: 50; display: flex; justify-content: flex-end; }
-      .drawer { width: 460px; max-width: 92vw; background: var(--panel); height: 100%; overflow-y: auto; box-shadow: -8px 0 30px rgba(20,24,34,0.15); }
+      .drawer-overlay { position: fixed; inset: 0; background: rgba(20,24,34,0.32); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; }
+      .drawer { width: 560px; max-width: 100%; max-height: 88vh; background: var(--panel); border-radius: 10px; overflow-y: auto; box-shadow: 0 20px 60px rgba(20,24,34,0.25); }
       .drawer-head { padding: 18px 20px 6px; border-bottom: 1px solid var(--border); }
       .drawer-head-top { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
       .spacer { flex: 1; }
@@ -2821,6 +3057,8 @@ function Style() {
       /* Modal */
       .modal-overlay { position: fixed; inset: 0; background: rgba(20,24,34,0.32); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
       .modal { background: var(--panel); border-radius: 10px; width: 520px; max-width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(20,24,34,0.25); }
+      .modal-sm { width: 380px; }
+      .field-error { color: var(--danger); font-size: 11.5px; margin: -4px 0 6px; }
       .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
       .modal-head h3 { font-family: var(--display); font-size: 15px; margin: 0; }
       .modal-head svg { cursor: pointer; color: var(--ink-soft); }
@@ -2834,6 +3072,7 @@ function Style() {
       .next-step-hint { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
       .complete-task-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; }
       .required-mark { font-weight: 400; color: var(--danger); font-size: 10.5px; text-transform: none; letter-spacing: 0; }
+      .field-hint { font-weight: 400; color: var(--ink-soft); font-size: 10.5px; text-transform: none; letter-spacing: 0; margin-top: 2px; }
       .btn:disabled { opacity: .45; cursor: not-allowed; }
       .completion-box { background: #E9F6EF; color: #1E6B41; }
       .completion-box b { color: #1E6B41; }
@@ -2878,7 +3117,8 @@ function Style() {
         .mobile-nav-close { display: block; }
         .mobile-hamburger { display: inline-flex; }
         .rotina-grid { grid-template-columns: 1fr; }
-        .drawer { width: 100%; }
+        .drawer { width: 100%; max-height: 92vh; }
+        .drawer-overlay { padding: 0; }
         .search-panel { left: 14px; right: 14px; width: auto; }
         .edit-grid { grid-template-columns: 1fr; }
       }
