@@ -3,7 +3,8 @@ import {
   Inbox, CheckSquare, Activity, Calendar, Building2, Users, Repeat,
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
-  Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone
+  Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone,
+  Sun, Moon
 } from "lucide-react";
 
 /* ============================================================
@@ -213,26 +214,48 @@ function setNotificationsEnabledPref(val) {
 }
 
 /* ============================================================
-   SORT PREFERENCE (persistida por lista, sobrevive a reload)
+   PREFERÊNCIA PERSISTIDA (ordenação, filtros — sobrevive a reload)
    ============================================================ */
-const SORT_PREF_PREFIX = "rotina-sort-";
+const PREF_PREFIX = "rotina-pref-";
+const SORT_PREF_PREFIX = "rotina-sort-"; // mantido para não resetar preferências já salvas
 
-function getSortPref(listKey, fallback) {
+function getPersistedPref(key, fallback) {
   try {
-    const v = localStorage.getItem(SORT_PREF_PREFIX + listKey);
+    const v = localStorage.getItem(PREF_PREFIX + key);
     return v || fallback;
   } catch (e) { return fallback; }
 }
-function setSortPref(listKey, value) {
-  try { localStorage.setItem(SORT_PREF_PREFIX + listKey, value); } catch (e) {}
+function setPersistedPref(key, value) {
+  try { localStorage.setItem(PREF_PREFIX + key, value); } catch (e) {}
+}
+function usePersistedState(key, fallback) {
+  const [value, setValueState] = useState(() => getPersistedPref(key, fallback));
+  function setValue(v) {
+    setValueState(v);
+    setPersistedPref(key, v);
+  }
+  return [value, setValue];
 }
 function usePersistedSort(listKey, fallback) {
-  const [sortBy, setSortByState] = useState(() => getSortPref(listKey, fallback));
+  const [sortBy, setSortByState] = useState(() => {
+    try { return localStorage.getItem(SORT_PREF_PREFIX + listKey) || fallback; } catch (e) { return fallback; }
+  });
   function setSortBy(value) {
     setSortByState(value);
-    setSortPref(listKey, value);
+    try { localStorage.setItem(SORT_PREF_PREFIX + listKey, value); } catch (e) {}
   }
   return [sortBy, setSortBy];
+}
+
+/* ============================================================
+   TEMA (claro/escuro) — persistido, aplicado via atributo no <html>
+   ============================================================ */
+const THEME_KEY = "rotina-theme";
+function getThemePref() {
+  try { return localStorage.getItem(THEME_KEY) || "light"; } catch (e) { return "light"; }
+}
+function setThemePref(value) {
+  try { localStorage.setItem(THEME_KEY, value); } catch (e) {}
 }
 
 /* ============================================================
@@ -375,11 +398,13 @@ export default function App() {
   const [notificationPermission, setNotificationPermission] = useState(() => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"));
   const [bulkCompleteTarget, setBulkCompleteTarget] = useState(null); // array of task ids
   const [pendingDelete, setPendingDelete] = useState(null); // { kind, id, label }
+  const [theme, setTheme] = useState(() => getThemePref());
   const recurringChecked = useRef(false);
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
 
-  // aplica o logo da empresa como favicon da aba
+  // aplica o logo da empresa como favicon da aba, com cantos arredondados
+  // (com fundo branco por trás para não "sumir" em abas com tema escuro do navegador)
   useEffect(() => {
     let link = document.querySelector("link[rel~='icon']");
     if (!link) {
@@ -387,8 +412,43 @@ export default function App() {
       link.rel = "icon";
       document.head.appendChild(link);
     }
-    link.href = "/logo.png";
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const size = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      const radius = size * 0.22; // cantos arredondados, não circular
+      ctx.beginPath();
+      ctx.moveTo(radius, 0);
+      ctx.arcTo(size, 0, size, size, radius);
+      ctx.arcTo(size, size, 0, size, radius);
+      ctx.arcTo(0, size, 0, 0, radius);
+      ctx.arcTo(0, 0, size, 0, radius);
+      ctx.closePath();
+      ctx.clip();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fill();
+      // cover: preenche o quadrado mantendo a proporção da imagem original
+      const scale = Math.max(size / img.width, size / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      link.href = canvas.toDataURL("image/png");
+    };
+    img.onerror = () => { link.href = "/logo.png"; }; // se falhar, usa o arquivo original
+    img.src = "/logo.png";
   }, []);
+
+  // aplica o tema (claro/escuro) no elemento raiz e persiste a escolha
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    setThemePref(theme);
+  }, [theme]);
+  function toggleTheme() {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }
 
   // ensure recurring instances exist (runs once after data loaded)
   useEffect(() => {
@@ -919,6 +979,9 @@ export default function App() {
             <div className="brand-title">BRdata Tecnologia</div>
             <div className="brand-sub">Central de Rotina</div>
           </div>
+          <button type="button" className="theme-toggle" onClick={toggleTheme} title={theme === "dark" ? "Mudar para tema claro" : "Mudar para tema escuro"}>
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
           <X size={18} className="mobile-nav-close" onClick={() => setMobileNavOpen(false)} />
         </div>
         <nav className="nav">
@@ -1109,6 +1172,8 @@ export default function App() {
               notificationsEnabled={notificationsEnabled}
               notificationPermission={notificationPermission}
               onToggleNotifications={toggleNotifications}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           )}
         </div>
@@ -1127,6 +1192,8 @@ export default function App() {
           onComplete={requestComplete}
           onReschedule={rescheduleTask}
           onDelete={(id) => requestDelete("task", id, "Excluir esta tarefa? Essa ação não pode ser desfeita.")}
+          onCreateCompany={upsertCompany}
+          onCreatePerson={upsertPerson}
           onLink={linkTasks}
           onOpenTask={(t) => setSelectedTask(t)}
           onCreateFollowUp={(draft) => {
@@ -1229,6 +1296,8 @@ export default function App() {
         <RecurringFormModal
           editing={recurringModal === "new" ? null : recurringModal}
           companies={data.companies} people={data.people} categories={data.categories}
+          onCreateCompany={upsertCompany}
+          onCreatePerson={upsertPerson}
           onClose={() => setRecurringModal(null)}
           onSubmit={(draft) => {
             if (recurringModal === "new") {
@@ -1432,9 +1501,9 @@ function InboxView({ items, draft, setDraft, onCapture, onProcess, onDelete }) {
    ============================================================ */
 
 function TasksView({ tasks, categories, companies, people, companyFilter, personFilter, onOpen, onQuickComplete, onNewTask, onBulkComplete, onBulkSetCategory, onBulkSetPriority, onBulkDelete }) {
-  const [status, setStatus] = useState("abertas");
-  const [priority, setPriority] = useState("Todas");
-  const [category, setCategory] = useState("Todas");
+  const [status, setStatus] = usePersistedState("tasks-status", "abertas");
+  const [priority, setPriority] = usePersistedState("tasks-priority", "Todas");
+  const [category, setCategory] = usePersistedState("tasks-category", "Todas");
   const [q, setQ] = useState("");
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -2020,7 +2089,7 @@ function OverviewView({ tasks, categories }) {
    SETTINGS VIEW
    ============================================================ */
 
-function SettingsView({ categories, onAdd, onRemove, notificationsEnabled, notificationPermission, onToggleNotifications }) {
+function SettingsView({ categories, onAdd, onRemove, notificationsEnabled, notificationPermission, onToggleNotifications, theme, onToggleTheme }) {
   const [draft, setDraft] = useState("");
 
   const permissionLabel = notificationPermission === "granted" ? "Permitido pelo navegador"
@@ -2073,6 +2142,19 @@ function SettingsView({ categories, onAdd, onRemove, notificationsEnabled, notif
         <div className="next-step-hint">
           Funciona enquanto este app estiver aberto em alguma aba do navegador — feche todas as abas e os lembretes param de disparar.
           {notificationPermission === "denied" && " Você bloqueou notificações para este site anteriormente; para reativar, ajuste isso nas configurações do navegador."}
+        </div>
+      </div>
+
+      <div className="settings-section-title">Aparência</div>
+      <div className="side-card">
+        <div className="settings-notif-row">
+          <div>
+            <div className="settings-notif-label">Tema do sistema</div>
+            <div className="side-row-sub">{theme === "dark" ? "Escuro" : "Claro"}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onToggleTheme}>
+            {theme === "dark" ? <><Sun size={13} /> Usar tema claro</> : <><Moon size={13} /> Usar tema escuro</>}
+          </button>
         </div>
       </div>
 
@@ -2140,7 +2222,7 @@ function SearchResults({ results, companies, people, onOpenTask, onClose }) {
    TASK DETAIL PANEL
    ============================================================ */
 
-function TaskDetail({ task, allTasks, activities, companies, people, categories, onClose, onPatch, onComplete, onReschedule, onDelete, onLink, onCreateFollowUp, onOpenTask }) {
+function TaskDetail({ task, allTasks, activities, companies, people, categories, onClose, onPatch, onComplete, onReschedule, onDelete, onLink, onCreateFollowUp, onOpenTask, onCreateCompany, onCreatePerson }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(task);
   const [linkQuery, setLinkQuery] = useState("");
@@ -2263,18 +2345,8 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
                   </select>
                 </label>
                 <label>Subcategoria<input value={form.subcategory || ""} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
-                <label>Empresa
-                  <select value={form.companyId || ""} onChange={(e) => { const id = e.target.value || null; const keepPerson = people.find((p) => p.id === form.personId)?.companyId === id; setForm({ ...form, companyId: id, personId: keepPerson ? form.personId : null }); }}>
-                    <option value="">—</option>
-                    {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </label>
-                <label>Pessoa
-                  <select value={form.personId || ""} onChange={(e) => setForm({ ...form, personId: e.target.value || null })}>
-                    <option value="">—</option>
-                    {(form.companyId ? people.filter((p) => p.companyId === form.companyId) : people).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </label>
+                <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => { const keepPerson = people.find((p) => p.id === form.personId)?.companyId === id; setForm({ ...form, companyId: id, personId: keepPerson ? form.personId : null }); }} onCreate={onCreateCompany} />
+                <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
               </div>
               <label>Observações<textarea rows={2} value={form.notes || ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
               <label>Anexos (link ou referência)<input placeholder="Cole um link ou descreva o anexo" value={form.attachmentsNote || ""} onChange={(e) => setForm({ ...form, attachmentsNote: e.target.value })} /></label>
@@ -2347,7 +2419,16 @@ function EntityPicker({ label, options, value, onChange, onCreate, placeholder }
   return (
     <div className="entity-picker">
       <label>{label}</label>
-      <div className="entity-picker-box" onClick={() => setOpen(true)}>
+      <div
+        className="entity-picker-box"
+        tabIndex={0}
+        role="button"
+        aria-haspopup="listbox"
+        onClick={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(true); }
+        }}
+      >
         {selected ? selected.name : <span className="ph">{placeholder || "Selecionar…"}</span>}
       </div>
       {open && (
@@ -2631,7 +2712,7 @@ function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }
    RECURRING FORM MODAL
    ============================================================ */
 
-function RecurringFormModal({ editing, companies, people, categories, onClose, onSubmit }) {
+function RecurringFormModal({ editing, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
   const [form, setForm] = useState({
     title: editing?.title || "", description: editing?.description || "",
     category: editing?.category || categories[0] || "", priority: editing?.priority || "Média",
@@ -2686,8 +2767,8 @@ function RecurringFormModal({ editing, companies, people, categories, onClose, o
             </label>
           </div>
           <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={() => null} />
-            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={() => null} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
+            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
           {editing && (
             <div className="next-step-hint">Editar aqui muda o modelo da recorrência e a próxima geração — tarefas já geradas anteriormente não são alteradas.</div>
@@ -2804,6 +2885,7 @@ function Style() {
   return (
     <style>{`
       :root {
+        color-scheme: light;
         --ink: #1C2230;
         --ink-soft: #545E70;
         --bg: #F5F6F9;
@@ -2817,12 +2899,35 @@ function Style() {
         --today: #237CC0;
         --tomorrow: #C9A227;
         --next: #F08516;
+        --hover: rgba(28,34,48,0.045);
+        --input-bg: #FFFFFF;
         --radius: 8px;
         --mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, monospace;
         --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         --display: 'Sora', 'Inter', sans-serif;
       }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --ink: #E7E9EF;
+        --ink-soft: #9AA3B5;
+        --bg: #12151C;
+        --panel: #1B1F29;
+        --border: #2A2F3B;
+        --accent: #4B9FE0;
+        --accent-soft: #4B9FE01F;
+        --brand-blue: #F08516;
+        --brand-blue-soft: #F0851622;
+        --danger: #E36664;
+        --today: #4B9FE0;
+        --tomorrow: #D8BC53;
+        --next: #F08516;
+        --hover: rgba(255,255,255,0.05);
+        --input-bg: #12151C;
+      }
+      [data-theme="dark"] .app-root img { opacity: 0.94; }
       * { box-sizing: border-box; }
+      input, select, textarea { background: var(--input-bg); color: var(--ink); font-family: inherit; }
+      input::placeholder, textarea::placeholder { color: var(--ink-soft); opacity: 0.7; }
       .app-root { display: flex; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13.5px; }
       .loading-root { align-items: center; justify-content: center; }
       .loading-box { color: var(--ink-soft); }
@@ -2834,9 +2939,11 @@ function Style() {
       .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
       .brand-title { font-family: var(--display); font-weight: 600; font-size: 13.5px; line-height: 1.2; }
       .brand-sub { color: var(--ink-soft); font-size: 11px; }
+      .theme-toggle { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); cursor: pointer; flex-shrink: 0; }
+      .theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
       .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
       .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none; background: transparent; border-radius: 7px; cursor: pointer; color: var(--ink-soft); font-size: 13px; text-align: left; font-family: var(--sans); }
-      .nav-item:hover { background: #F0F2F6; color: var(--ink); }
+      .nav-item:hover { background: var(--hover); color: var(--ink); }
       .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
       .nav-item span:first-of-type { flex: 1; }
       .nav-count { background: #DDE2EA; color: var(--ink-soft); font-size: 10.5px; padding: 1px 6px; border-radius: 10px; font-family: var(--mono); }
@@ -2896,9 +3003,9 @@ function Style() {
       /* Task row */
       .task-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); cursor: pointer; }
       .section-body .task-row:first-child { border-top: none; }
-      .task-row:hover { background: #FAFBFC; }
+      .task-row:hover { background: var(--hover); }
       .task-row.done .task-row-title { text-decoration: line-through; color: var(--ink-soft); }
-      .check-circle { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #C7CDD8; background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; color: #fff; }
+      .check-circle { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #C7CDD8; background: var(--panel); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; color: #fff; }
       .check-circle.checked { background: var(--accent); border-color: var(--accent); }
       .task-row-main { flex: 1; min-width: 0; }
       .task-row-company { font-weight: 700; font-size: 11.5px; color: var(--accent); text-transform: uppercase; letter-spacing: .02em; margin-bottom: 2px; }
@@ -3066,7 +3173,7 @@ function Style() {
       .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
       .next-step-toggle { display: flex; align-items: center; gap: 9px; padding: 9px 0 3px; cursor: pointer; user-select: none; }
       .next-step-toggle span { font-size: 12.5px; font-weight: 600; color: var(--ink); }
-      .toggle-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #C7CDD8; background: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
+      .toggle-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #C7CDD8; background: var(--panel); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
       .toggle-box.on { background: var(--accent); border-color: var(--accent); }
       .next-step-form { background: var(--accent-soft); border-radius: 8px; padding: 12px; margin: 8px 0 4px; }
       .next-step-hint { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
@@ -3079,7 +3186,8 @@ function Style() {
 
       /* Entity picker */
       .entity-picker { position: relative; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-soft); font-weight: 600; margin-bottom: 10px; }
-      .entity-picker-box { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12.5px; color: var(--ink); font-weight: 400; cursor: pointer; background: #fff; }
+      .entity-picker-box { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12.5px; color: var(--ink); font-weight: 400; cursor: pointer; background: var(--panel); }
+      .entity-picker-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       .entity-picker-box .ph { color: #A7ADB9; }
       .entity-picker-panel { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; margin-top: 3px; z-index: 20; box-shadow: 0 10px 26px rgba(20,24,34,0.14); padding: 8px; }
       .entity-picker-panel input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; margin-bottom: 6px; font-weight: 400; }
