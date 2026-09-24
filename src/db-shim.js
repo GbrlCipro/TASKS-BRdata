@@ -74,9 +74,23 @@ const ACTIVITY_FIELD_MAP = {
 };
 
 function companyFromRow(r) {
-  return { id: r.id, name: r.name || "", segment: r.segment || "", city: r.city || "", notes: r.notes || "" };
+  return {
+    id: r.id, name: r.name || "", segment: r.segment || "", city: r.city || "",
+    address: r.address || "", location: r.location || "", phone: r.phone || "",
+    contactPersonId: r.contact_person_id || null,
+    entityType: r.entity_type || "", crmStage: r.crm_stage || "", origin: r.origin || "",
+    classification: r.classification || "",
+    commercialSummary: r.commercial_summary || "", lostReason: r.lost_reason || "",
+    notes: r.notes || "",
+  };
 }
-const COMPANY_FIELD_MAP = { name: "name", segment: "segment", city: "city", notes: "notes" };
+const COMPANY_FIELD_MAP = {
+  name: "name", segment: "segment", city: "city", address: "address", location: "location",
+  phone: "phone", contactPersonId: "contact_person_id",
+  entityType: "entity_type", crmStage: "crm_stage", origin: "origin", classification: "classification",
+  commercialSummary: "commercial_summary", lostReason: "lost_reason",
+  notes: "notes",
+};
 
 function personFromRow(r) {
   return {

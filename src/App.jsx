@@ -4,7 +4,7 @@ import {
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
   Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone,
-  Sun, Moon
+  Sun, Moon, MapPin, Tag, Target, MessageCircle
 } from "lucide-react";
 
 /* ============================================================
@@ -33,6 +33,30 @@ const DEFAULT_CATEGORIES = [
   "Reuniões", "Documentação", "Acompanhamento", "Outros",
 ];
 
+// Campos de CRM para Empresas/Pessoas (leads e cadastros)
+const ENTITY_TYPES = ["Cliente", "Parceiro", "Colaborador", "Fornecedor"];
+const CRM_STAGES = ["Lead", "Qualificação", "Proposta", "Acompanhamento", "Negociação", "Fechado", "Perdido"];
+const CRM_STAGE_COLOR = {
+  "Lead": "#8B93A7",
+  "Qualificação": "#5C7FA6",
+  "Proposta": "#C9A227",
+  "Acompanhamento": "#237CC0",
+  "Negociação": "#F08516",
+  "Fechado": "#2F9E5C",
+  "Perdido": "#D64545",
+};
+const ORIGINS = [
+  "Indicação (Parceiro)", "Indicação (Cliente)", "Indicação (Colaborador)",
+  "Prospecção", "Whatsapp", "Instagram", "Visita à empresa", "Diretores",
+];
+const SEGMENTS = [
+  "Agronegócio", "Armazéns Gerais", "Atacado e Varejo", "Indústria",
+  "Fiscal/Contábil", "Marmorarias", "Shows/Eventos/Artistas", "Serviços", "Ponto Eletrônico",
+];
+const CLASSIFICATIONS = ["A", "B", "C", "D"];
+const CLASSIFICATION_COLOR = { A: "#2F9E5C", B: "#5C7FA6", C: "#D9822B", D: "#D64545" };
+const INTERACTION_TYPES = ["WhatsApp", "Ligação", "Reunião", "Visita", "Demonstração", "E-mail", "Proposta", "Follow-up", "Observação"];
+
 const STORAGE_KEY = "brdata-rotina-app-v1";
 
 const NAV = [
@@ -42,6 +66,7 @@ const NAV = [
   { id: "activities", label: "Atividades", icon: Activity },
   { id: "agenda", label: "Agenda", icon: Calendar },
   { id: "companies", label: "Empresas", icon: Building2 },
+  { id: "prospeccao", label: "Prospecção", icon: Target },
   { id: "people", label: "Pessoas", icon: Users },
   { id: "recurring", label: "Recorrentes", icon: Repeat },
   { id: "overview", label: "Visão Geral", icon: BarChart3 },
@@ -311,6 +336,18 @@ function StatusPill({ status }) {
     "Cancelada": "#B0B6C2",
   };
   return <span className="badge" style={{ color: map[status], background: map[status] + "18" }}>{status}</span>;
+}
+
+function CrmStageBadge({ stage }) {
+  if (!stage) return null;
+  const c = CRM_STAGE_COLOR[stage] || "#8B93A7";
+  return <span className="badge" style={{ color: c, background: c + "18" }}>{stage}</span>;
+}
+
+function ClassificationBadge({ classification }) {
+  if (!classification) return null;
+  const c = CLASSIFICATION_COLOR[classification] || "#8B93A7";
+  return <span className="badge classification-badge" style={{ color: c, background: c + "18" }}>Classe {classification}</span>;
 }
 
 function EmptyState({ icon: Icon, title, hint }) {
@@ -852,16 +889,32 @@ export default function App() {
   }
 
   function patchCompany(id, form) {
+    const current = data.companies.find((c) => c.id === id);
     const patch = {
       name: (form.name || "").trim() || undefined,
       segment: form.segment || "", city: form.city || "",
-      address: form.address || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      address: form.address || "", location: form.location || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
+      classification: form.classification || "",
       notes: form.notes || "",
+      commercialSummary: form.commercialSummary !== undefined ? form.commercialSummary : (current?.commercialSummary || ""),
+      lostReason: form.lostReason !== undefined ? form.lostReason : (current?.lostReason || ""),
     };
     update((d) => {
       d.companies = d.companies.map((c) => c.id === id ? { ...c, ...patch, name: patch.name || c.name } : c);
     });
     window.db.updateCompany(id, patch).catch(console.error);
+  }
+
+  // Atualização parcial e leve (não passa pelo objeto "form" completo do modal) —
+  // usada pelo kanban de Prospecção (mudar etapa via drag-and-drop) e pelo
+  // Resumo Comercial editável inline no perfil, para não sobrescrever os
+  // outros campos da empresa com valores vazios.
+  function patchCompanyField(id, fieldPatch) {
+    update((d) => {
+      d.companies = d.companies.map((c) => c.id === id ? { ...c, ...fieldPatch } : c);
+    });
+    window.db.updateCompany(id, fieldPatch).catch(console.error);
   }
 
   function upsertCompanyFull(form) {
@@ -875,8 +928,11 @@ export default function App() {
     const id = uid("co");
     const company = {
       id, name: trimmed, segment: form.segment || "", city: form.city || "",
-      address: form.address || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      address: form.address || "", location: form.location || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
+      classification: form.classification || "",
       notes: form.notes || "",
+      commercialSummary: "", lostReason: "",
     };
     update((d) => { d.companies = [...d.companies, company]; });
     window.db.insertCompany(company).catch(console.error);
@@ -1102,6 +1158,17 @@ export default function App() {
             />
           )}
 
+          {view === "prospeccao" && (
+            <ProspeccaoView
+              companies={data.companies}
+              onOpenCompany={(c) => { setProfileTarget({ type: "company", id: c.id }); setView("profile"); }}
+              onEditCompany={(c) => setCompanyModal(c)}
+              onChangeStage={(id, stage, lostReason) => patchCompanyField(id, { crmStage: stage, lostReason: lostReason !== undefined ? lostReason : "" })}
+              onLogContact={(c) => { setActivityFormPrefill({ companyId: c.id, fromProfile: true }); setActivityFormOpen(true); }}
+              onNewCompany={() => setCompanyModal("new")}
+            />
+          )}
+
           {view === "people" && (
             <PeopleView
               people={data.people} companies={data.companies} tasks={data.tasks} activities={data.activities}
@@ -1149,6 +1216,7 @@ export default function App() {
                 });
                 setActivityFormOpen(true);
               }}
+              onUpdateCommercialSummary={(id, text) => patchCompanyField(id, { commercialSummary: text })}
             />
           )}
 
@@ -1744,13 +1812,22 @@ function AgendaView({ tasks, companies, people, onOpen, onQuickComplete }) {
 
 function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, onSelect }) {
   const [sortBy, setSortBy] = usePersistedSort("companies", "recent");
-  const sorted = sortEntities(companies, sortBy);
+  const [entityTypeFilter, setEntityTypeFilter] = usePersistedState("companies-entity-type", "Todos");
+  const [crmStageFilter, setCrmStageFilter] = usePersistedState("companies-crm-stage", "Todas");
+  const [classificationFilter, setClassificationFilter] = usePersistedState("companies-classification", "Todas");
+
+  let filtered = companies;
+  if (entityTypeFilter !== "Todos") filtered = filtered.filter((c) => c.entityType === entityTypeFilter);
+  if (crmStageFilter !== "Todas") filtered = filtered.filter((c) => c.crmStage === crmStageFilter);
+  if (classificationFilter !== "Todas") filtered = filtered.filter((c) => c.classification === classificationFilter);
+  const sorted = sortEntities(filtered, sortBy);
+
   return (
     <div className="view">
       <div className="view-header">
         <div>
           <h1>Empresas</h1>
-          <p className="view-sub">{companies.length} cadastradas</p>
+          <p className="view-sub">{sorted.length} de {companies.length} cadastradas</p>
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova empresa</button>
       </div>
@@ -1759,9 +1836,22 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
           <option value="recent">Mais recentes primeiro</option>
           <option value="name">Nome (A-Z)</option>
         </select>
+        <select value={entityTypeFilter} onChange={(e) => setEntityTypeFilter(e.target.value)} title="Filtrar por tipo">
+          <option value="Todos">Todos os tipos</option>
+          {ENTITY_TYPES.map((t) => <option key={t}>{t}</option>)}
+        </select>
+        <select value={crmStageFilter} onChange={(e) => setCrmStageFilter(e.target.value)} title="Filtrar por etapa do CRM">
+          <option value="Todas">Todas as etapas</option>
+          {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
+        </select>
+        <select value={classificationFilter} onChange={(e) => setClassificationFilter(e.target.value)} title="Filtrar por classificação">
+          <option value="Todas">Todas as classes</option>
+          {CLASSIFICATIONS.map((c) => <option key={c}>Classe {c}</option>)}
+        </select>
       </div>
       <div className="grid-cards">
         {companies.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa cadastrada" hint="Cadastre os clientes, fornecedores e parceiros que aparecem na sua rotina." />}
+        {companies.length > 0 && sorted.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa encontrada" hint="Ajuste os filtros acima." />}
         {sorted.map((c) => {
           const tCount = tasks.filter((t) => t.companyId === c.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
           const aCount = activities.filter((a) => a.companyId === c.id).length;
@@ -1773,19 +1863,170 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                 <div className="entity-name"><Building2 size={14} /> {c.name}</div>
                 <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
               </div>
+              {(c.entityType || c.crmStage || c.classification) && (
+                <div className="entity-crm-row">
+                  {c.entityType && <Badge>{c.entityType}</Badge>}
+                  <CrmStageBadge stage={c.crmStage} />
+                  <ClassificationBadge classification={c.classification} />
+                </div>
+              )}
               {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
               <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
               {(contact || c.address || c.phone) && (
                 <div className="entity-contact">
                   {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
                   {c.phone && <span><Phone size={11} /> {c.phone}</span>}
-                  {c.address && <span>{c.address}</span>}
+                  {c.address && <span><MapPin size={11} /> {c.address}</span>}
                 </div>
               )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PROSPECÇÃO (kanban de empresas por etapa do CRM)
+   ============================================================ */
+
+const PROSPECCAO_COLUMNS = ["Sem etapa", ...CRM_STAGES];
+
+function KanbanCard({ company, onOpen, onEdit, onLogContact, onDragStart }) {
+  return (
+    <div
+      className="kanban-card"
+      draggable
+      onDragStart={(e) => onDragStart(e, company.id)}
+      onClick={() => onOpen(company)}
+    >
+      <div className="kanban-card-top">
+        <div className="kanban-card-name">{company.name}</div>
+        <button className="icon-btn kanban-card-edit" onClick={(e) => { e.stopPropagation(); onEdit(company); }} title="Editar"><Edit2 size={11} /></button>
+      </div>
+      <div className="kanban-card-badges">
+        {company.entityType && <Badge>{company.entityType}</Badge>}
+        <ClassificationBadge classification={company.classification} />
+      </div>
+      {(company.segment || company.city) && (
+        <div className="kanban-card-sub">{[company.segment, company.city].filter(Boolean).join(" · ")}</div>
+      )}
+      <button className="btn btn-ghost btn-sm kanban-card-contact" onClick={(e) => { e.stopPropagation(); onLogContact(company); }}>
+        <MessageCircle size={12} /> Registrar contato
+      </button>
+    </div>
+  );
+}
+
+function LostReasonModal({ company, onCancel, onConfirm }) {
+  const [reason, setReason] = useState("");
+  const trimmed = reason.trim();
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Marcar como perdida</h3>
+          <X size={16} onClick={onCancel} />
+        </div>
+        <div className="modal-body">
+          <div className="complete-task-title">{company.name}</div>
+          <label>
+            <span>Motivo <span className="required-mark">(obrigatório)</span></span>
+            <textarea
+              autoFocus rows={3}
+              placeholder="Ex: preço, fechou com concorrente, sem orçamento no momento…"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </label>
+          <div className="modal-footer">
+            <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+            <button type="button" className="btn btn-primary" disabled={!trimmed} onClick={() => onConfirm(trimmed)}>Confirmar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage, onLogContact, onNewCompany }) {
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const [lostPending, setLostPending] = useState(null); // { companyId, company }
+
+  const byColumn = {};
+  PROSPECCAO_COLUMNS.forEach((col) => { byColumn[col] = []; });
+  companies.forEach((c) => {
+    const col = CRM_STAGES.includes(c.crmStage) ? c.crmStage : "Sem etapa";
+    byColumn[col].push(c);
+  });
+
+  function handleDragStart(e, companyId) {
+    e.dataTransfer.setData("text/plain", companyId);
+  }
+  function handleDrop(e, col) {
+    e.preventDefault();
+    setDragOverCol(null);
+    const companyId = e.dataTransfer.getData("text/plain");
+    if (!companyId) return;
+    const company = companies.find((c) => c.id === companyId);
+    if (!company) return;
+    const targetStage = col === "Sem etapa" ? "" : col;
+    if (targetStage === company.crmStage) return;
+    if (targetStage === "Perdido") {
+      setLostPending({ companyId, company });
+    } else {
+      onChangeStage(companyId, targetStage);
+    }
+  }
+
+  return (
+    <div className="view prospeccao-view">
+      <div className="view-header">
+        <div>
+          <h1>Prospecção</h1>
+          <p className="view-sub">Arraste os cards entre as colunas para mudar a etapa do CRM. {companies.length} empresa(s) no total.</p>
+        </div>
+        <button className="btn btn-primary" onClick={onNewCompany}><Plus size={14} /> Nova empresa</button>
+      </div>
+
+      <div className="kanban-board">
+        {PROSPECCAO_COLUMNS.map((col) => (
+          <div
+            key={col}
+            className={`kanban-col ${dragOverCol === col ? "drag-over" : ""} ${col === "Perdido" ? "kanban-col-lost" : ""} ${col === "Fechado" ? "kanban-col-won" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOverCol(col); }}
+            onDragLeave={() => setDragOverCol((c) => (c === col ? null : c))}
+            onDrop={(e) => handleDrop(e, col)}
+          >
+            <div className="kanban-col-head">
+              <span>{col}</span>
+              <span className="kanban-col-count">{byColumn[col].length}</span>
+            </div>
+            <div className="kanban-col-body">
+              {byColumn[col].length === 0 && <div className="kanban-col-empty">Solte um card aqui</div>}
+              {byColumn[col].map((c) => (
+                <KanbanCard
+                  key={c.id} company={c}
+                  onOpen={onOpenCompany} onEdit={onEditCompany} onLogContact={onLogContact}
+                  onDragStart={handleDragStart}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {lostPending && (
+        <LostReasonModal
+          company={lostPending.company}
+          onCancel={() => setLostPending(null)}
+          onConfirm={(reason) => {
+            onChangeStage(lostPending.companyId, "Perdido", reason);
+            setLostPending(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1837,10 +2078,43 @@ function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSel
 }
 
 /* ============================================================
+   RESUMO COMERCIAL (campo inline, editável, sempre visível no
+   topo do perfil da empresa)
+   ============================================================ */
+
+function CommercialSummaryBox({ companyId, value, onSave }) {
+  const [text, setText] = useState(value);
+  const [dirty, setDirty] = useState(false);
+
+  function commit() {
+    if (!dirty) return;
+    onSave(companyId, text);
+    setDirty(false);
+  }
+
+  return (
+    <div className="commercial-summary-box">
+      <div className="commercial-summary-head">
+        <Sparkles size={13} /> Resumo Comercial
+        {dirty && <span className="commercial-summary-dirty">alterações não salvas</span>}
+      </div>
+      <textarea
+        rows={2}
+        placeholder="Panorama comercial atual desta conta — status, próximos passos, pontos de atenção…"
+        value={text}
+        onChange={(e) => { setText(e.target.value); setDirty(true); }}
+        onBlur={commit}
+        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.target.blur(); } }}
+      />
+    </div>
+  );
+}
+
+/* ============================================================
    ENTITY PROFILE (empresa ou pessoa — resumo + histórico)
    ============================================================ */
 
-function EntityProfile({ target, companies, people, tasks, activities, onBack, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete }) {
+function EntityProfile({ target, companies, people, tasks, activities, onBack, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete, onUpdateCommercialSummary }) {
   const isCompany = target.type === "company";
   const entity = isCompany ? companies.find((c) => c.id === target.id) : people.find((p) => p.id === target.id);
 
@@ -1891,6 +2165,24 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
         </div>
       </div>
 
+      {isCompany && (entity.entityType || entity.crmStage || entity.classification || entity.origin) && (
+        <div className="profile-crm-row">
+          {entity.entityType && <Badge>{entity.entityType}</Badge>}
+          <CrmStageBadge stage={entity.crmStage} />
+          <ClassificationBadge classification={entity.classification} />
+          {entity.origin && <span className="meta-chip"><Tag size={11} /> {entity.origin}</span>}
+        </div>
+      )}
+
+      {isCompany && (
+        <CommercialSummaryBox
+          key={entity.id}
+          companyId={entity.id}
+          value={entity.commercialSummary || ""}
+          onSave={onUpdateCommercialSummary}
+        />
+      )}
+
       {!isCompany && relatedCompany && (
         <div className="profile-company-chip" onClick={() => onOpenRelated("company", relatedCompany.id)}>
           <Building2 size={12} /> {relatedCompany.name}
@@ -1902,16 +2194,20 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
         </div>
       )}
-      {isCompany && (entity.phone || entity.address) && (
+      {isCompany && (entity.phone || entity.address || entity.location) && (
         <div className="profile-contact-row">
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
-          {entity.address && <span>{entity.address}</span>}
+          {entity.address && <span><MapPin size={12} /> {entity.address}</span>}
+          {entity.location && <span><a href={entity.location} target="_blank" rel="noreferrer">Ver localização</a></span>}
         </div>
       )}
       {isCompany && entity.contactPersonId && people.find((p) => p.id === entity.contactPersonId) && (
         <div className="profile-company-chip" onClick={() => onOpenRelated("person", entity.contactPersonId)}>
           <Users size={12} /> Contato: {people.find((p) => p.id === entity.contactPersonId).name}
         </div>
+      )}
+      {isCompany && entity.notes && (
+        <div className="notes-box">{entity.notes}</div>
       )}
 
       <div className="profile-quick-actions">
@@ -2661,8 +2957,10 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
 function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }) {
   const [form, setForm] = useState({
     name: editing?.name || "", segment: editing?.segment || "", city: editing?.city || "",
-    address: editing?.address || "", phone: editing?.phone || "",
+    address: editing?.address || "", location: editing?.location || "", phone: editing?.phone || "",
     contactPersonId: editing?.contactPersonId || null,
+    entityType: editing?.entityType || "", crmStage: editing?.crmStage || "", origin: editing?.origin || "",
+    classification: editing?.classification || "",
     notes: editing?.notes || "",
   });
 
@@ -2682,10 +2980,38 @@ function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }
         <div className="modal-body">
           <label>Nome<input autoFocus required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
           <div className="edit-grid">
-            <label>Segmento<input placeholder="Ex: Varejo, Indústria…" value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} /></label>
+            <label>O que ele é?
+              <select value={form.entityType} onChange={(e) => setForm({ ...form, entityType: e.target.value })}>
+                <option value="">—</option>
+                {ENTITY_TYPES.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+            <label>Etapa do CRM
+              <select value={form.crmStage} onChange={(e) => setForm({ ...form, crmStage: e.target.value })}>
+                <option value="">—</option>
+                {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </label>
+            <label>Origem
+              <select value={form.origin} onChange={(e) => setForm({ ...form, origin: e.target.value })}>
+                <option value="">—</option>
+                {ORIGINS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <label>Classificação
+              <select value={form.classification} onChange={(e) => setForm({ ...form, classification: e.target.value })}>
+                <option value="">—</option>
+                {CLASSIFICATIONS.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+            <label>Atividade / Segmento<input list="segment-options" placeholder="Ex: Agronegócio…" value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} /></label>
+            <datalist id="segment-options">
+              {SEGMENTS.map((s) => <option key={s} value={s} />)}
+            </datalist>
             <label>Cidade<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label>
           </div>
           <label>Endereço<input placeholder="Rua, número, bairro…" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label>
+          <label>Localização (link do Google Maps, coordenadas, ou referência de acesso)<input placeholder="Cole aqui o link do mapa ou uma referência de localização" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>
           <div className="edit-grid">
             <label>Telefone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
             <EntityPicker
@@ -3019,6 +3345,7 @@ function Style() {
       .pbadge { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--pc); flex-shrink: 0; white-space: nowrap; }
       .pdot { width: 6px; height: 6px; border-radius: 50%; background: var(--pc); }
       .badge { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+      .classification-badge { font-family: var(--mono); }
 
       .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 46px 20px; color: var(--ink-soft); gap: 8px; text-align: center; }
       .empty-title { font-weight: 600; font-size: 13px; color: var(--ink); }
@@ -3071,12 +3398,35 @@ function Style() {
       .entity-name { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
       .entity-stats { font-size: 11px; color: var(--ink-soft); }
       .entity-role { font-size: 11.5px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+      .entity-crm-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
       .entity-contact { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--ink-soft); font-family: var(--mono); margin-top: 6px; }
       .entity-contact span { display: inline-flex; align-items: center; gap: 4px; }
       .entity-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
       .entity-card-head .entity-name { margin-bottom: 0; }
       .entity-edit-btn { opacity: 0; flex-shrink: 0; }
       .entity-card:hover .entity-edit-btn { opacity: 1; }
+
+      /* Prospecção (kanban) */
+      .prospeccao-view { max-width: 100%; }
+      .kanban-board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+      .kanban-col { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); width: 240px; flex-shrink: 0; display: flex; flex-direction: column; max-height: calc(100vh - 220px); }
+      .kanban-col.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+      .kanban-col-lost .kanban-col-head { color: var(--danger); }
+      .kanban-col-won .kanban-col-head { color: #2F9E5C; }
+      .kanban-col-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--border); }
+      .kanban-col-count { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); background: var(--panel); border-radius: 9px; padding: 1px 7px; }
+      .kanban-col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+      .kanban-col-empty { font-size: 11px; color: var(--ink-soft); text-align: center; padding: 14px 6px; border: 1px dashed var(--border); border-radius: 6px; }
+      .kanban-card { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 9px 10px; cursor: grab; }
+      .kanban-card:hover { border-color: var(--accent); }
+      .kanban-card:active { cursor: grabbing; }
+      .kanban-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+      .kanban-card-name { font-weight: 600; font-size: 12.5px; line-height: 1.3; }
+      .kanban-card-edit { opacity: 0; flex-shrink: 0; padding: 3px 4px; }
+      .kanban-card:hover .kanban-card-edit { opacity: 1; }
+      .kanban-card-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .kanban-card-sub { font-size: 11px; color: var(--ink-soft); margin-top: 5px; }
+      .kanban-card-contact { width: 100%; justify-content: center; margin-top: 8px; }
 
       /* Recurring */
       .recurring-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--border); }
@@ -3206,9 +3556,15 @@ function Style() {
       .profile-heading { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); }
       .profile-heading h1 { color: var(--ink); }
       .profile-actions { display: flex; gap: 6px; }
+      .profile-crm-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+      .commercial-summary-box { background: var(--brand-blue-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 14px; }
+      .commercial-summary-head { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--brand-blue); margin-bottom: 6px; }
+      .commercial-summary-dirty { margin-left: auto; font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-soft); }
+      .commercial-summary-box textarea { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12.5px; font-family: var(--sans); resize: vertical; }
       .profile-company-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 12px; cursor: pointer; margin-bottom: 10px; width: fit-content; }
-      .profile-contact-row { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+      .profile-contact-row { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; flex-wrap: wrap; }
       .profile-contact-row span { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); }
+      .profile-contact-row a { color: var(--accent); }
       .profile-quick-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
       .profile-stats { margin-bottom: 18px; }
       .profile-people { margin-bottom: 18px; }
