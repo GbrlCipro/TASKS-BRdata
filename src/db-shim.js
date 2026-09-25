@@ -63,6 +63,7 @@ function activityFromRow(r) {
     description: r.description || "",
     createdAt: r.created_at || "",
     category: r.category || "",
+    interactionType: r.interaction_type || "",
     companyId: r.company_id || null,
     personId: r.person_id || null,
     generatedTaskIds: r.generated_task_ids || [],
@@ -70,6 +71,7 @@ function activityFromRow(r) {
 }
 const ACTIVITY_FIELD_MAP = {
   title: "title", description: "description", createdAt: "created_at", category: "category",
+  interactionType: "interaction_type",
   companyId: "company_id", personId: "person_id", generatedTaskIds: "generated_task_ids",
 };
 

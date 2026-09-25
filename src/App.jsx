@@ -4,7 +4,7 @@ import {
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
   Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone,
-  Sun, Moon, MapPin, Tag, Target, MessageCircle
+  Sun, Moon, MapPin, Tag, Target, MessageCircle, ChevronDown
 } from "lucide-react";
 
 /* ============================================================
@@ -777,6 +777,7 @@ export default function App() {
       title: (form.title || "").trim() || undefined,
       description: form.description || "",
       category: form.category || "",
+      interactionType: form.interactionType || "",
       companyId: form.companyId || null,
       personId: form.personId || null,
     };
@@ -1448,14 +1449,17 @@ export default function App() {
    ============================================================ */
 
 function Section({ title, icon: Icon, count, tone, children, collapsedHint }) {
+  const [open, setOpen] = usePersistedState(`section-open-${title}`, "1");
+  const isOpen = open === "1";
   return (
     <div className="section">
-      <div className={`section-head tone-${tone}`}>
+      <div className={`section-head tone-${tone}`} onClick={() => setOpen(isOpen ? "0" : "1")}>
         <Icon size={15} />
         <span>{title}</span>
         <span className="section-count">{count}</span>
+        <ChevronDown size={14} className={`section-chevron ${isOpen ? "" : "collapsed"}`} />
       </div>
-      {count === 0 ? <div className="section-empty">{collapsedHint}</div> : <div className="section-body">{children}</div>}
+      {isOpen && (count === 0 ? <div className="section-empty">{collapsedHint}</div> : <div className="section-body">{children}</div>)}
     </div>
   );
 }
@@ -1714,7 +1718,10 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
 
 function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, onGenerateTask, onOpenTask }) {
   const [sortBy, setSortBy] = usePersistedSort("activities", "date");
-  const sorted = sortActivities(activities, sortBy);
+  const [interactionFilter, setInteractionFilter] = usePersistedState("activities-interaction-type", "Todos");
+  let filtered = activities;
+  if (interactionFilter !== "Todos") filtered = filtered.filter((a) => a.interactionType === interactionFilter);
+  const sorted = sortActivities(filtered, sortBy);
   return (
     <div className="view">
       <div className="view-header">
@@ -1731,6 +1738,10 @@ function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, o
           <option value="date_asc">Mais antigas primeiro</option>
           <option value="title">Nome (A-Z)</option>
         </select>
+        <select value={interactionFilter} onChange={(e) => setInteractionFilter(e.target.value)} title="Filtrar por tipo de interação">
+          <option value="Todos">Todos os tipos de interação</option>
+          {INTERACTION_TYPES.map((t) => <option key={t}>{t}</option>)}
+        </select>
       </div>
 
       <div className="activity-list">
@@ -1745,6 +1756,7 @@ function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, o
                 <div>
                   <div className="activity-title">{a.title}</div>
                   <div className="task-row-meta">
+                    {a.interactionType && <span className="meta-chip"><MessageCircle size={11} /> {a.interactionType}</span>}
                     {company && <span className="meta-chip">{company.name}</span>}
                     {person && <span className="meta-chip">{person.name}</span>}
                     <span className="meta-chip"><Clock size={11} /> {a.createdAt}</span>
@@ -1923,7 +1935,7 @@ function LostReasonModal({ company, onCancel, onConfirm }) {
   const [reason, setReason] = useState("");
   const trimmed = reason.trim();
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay">
       <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Marcar como perdida</h3>
@@ -2251,7 +2263,7 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
             <div className="timeline-content">
               <div className="timeline-ts">{ev.date}</div>
               {ev.kind === "activity" && (
-                <div className="timeline-text">Atividade: {ev.data.title}</div>
+                <div className="timeline-text">{ev.data.interactionType ? `${ev.data.interactionType}: ` : "Atividade: "}{ev.data.title}</div>
               )}
               {ev.kind === "task-created" && (
                 <div className="timeline-text timeline-clickable" onClick={() => onOpenTask(ev.data)}>Tarefa criada: {ev.data.title}</div>
@@ -2546,7 +2558,7 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
   }
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <div className="drawer-overlay">
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <div className="drawer-head-top">
@@ -2786,7 +2798,7 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{isFromActivity ? "Gerar tarefa a partir da atividade" : prefill && prefill.inInbox ? "Processar item da caixa de entrada" : "Nova tarefa"}</h3>
@@ -2870,6 +2882,7 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
     title: editing?.title || "",
     description: editing?.description || "",
     category: editing?.category || categories[0] || "",
+    interactionType: editing?.interactionType || (prefill && prefill.interactionType) || "",
     companyId: editing ? (editing.companyId ?? null) : ((prefill && prefill.companyId) || null),
     personId: editing ? (editing.personId ?? null) : ((prefill && prefill.personId) || null),
   });
@@ -2879,7 +2892,7 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
     onSubmit(form);
   }
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{editing ? "Editar atividade" : "Nova atividade"}</h3>
@@ -2888,12 +2901,20 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
         <div className="modal-body">
           <label>O que aconteceu?<input autoFocus required placeholder='Ex: "Cliente respondeu pedindo para retornar na sexta"' value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
           <label>Detalhes<textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-          <label>Categoria
-            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              <option value="">—</option>
-              {categories.map((c) => <option key={c}>{c}</option>)}
-            </select>
-          </label>
+          <div className="edit-grid">
+            <label>Categoria
+              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">—</option>
+                {categories.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+            <label>Tipo de interação
+              <select value={form.interactionType} onChange={(e) => setForm({ ...form, interactionType: e.target.value })}>
+                <option value="">—</option>
+                {INTERACTION_TYPES.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
           <div className="edit-grid">
             <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
             <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
@@ -2925,7 +2946,7 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{editing ? "Editar pessoa" : "Nova pessoa"}</h3>
@@ -2971,7 +2992,7 @@ function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{editing ? "Editar empresa" : "Nova empresa"}</h3>
@@ -3057,7 +3078,7 @@ function RecurringFormModal({ editing, companies, people, categories, onClose, o
     });
   }
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{editing ? "Editar recorrência" : "Nova tarefa recorrente"}</h3>
@@ -3123,7 +3144,7 @@ function CompleteTaskModal({ task, onClose, onConfirm }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Concluir tarefa</h3>
@@ -3171,7 +3192,7 @@ function AdminPasswordModal({ message, onCancel, onConfirm }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay">
       <div className="modal modal-sm" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>Confirmar exclusão</h3>
@@ -3308,7 +3329,9 @@ function Style() {
       .rotina-grid { display: grid; grid-template-columns: 1fr 260px; gap: 24px; align-items: start; }
       .rotina-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
       .section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-      .section-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-weight: 600; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+      .section-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-weight: 600; font-size: 12.5px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+      .section-chevron { transition: transform .15s ease; color: var(--ink-soft); }
+      .section-chevron.collapsed { transform: rotate(-90deg); }
       .section-head.tone-danger { color: var(--danger); }
       .section-head.tone-today { color: var(--today); }
       .section-head.tone-tomorrow { color: var(--tomorrow); }
