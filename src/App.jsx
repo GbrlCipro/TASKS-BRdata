@@ -34,7 +34,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // Campos de CRM para Empresas/Pessoas (leads e cadastros)
-const ENTITY_TYPES = ["Cliente", "Parceiro", "Colaborador", "Fornecedor"];
+const ENTITY_TYPES = ["Cliente", "Prospect", "Parceiro", "Colaborador", "Fornecedor"];
 const CRM_STAGES = ["Lead", "Qualificação", "Proposta", "Acompanhamento", "Negociação", "Fechado", "Perdido"];
 const CRM_STAGE_COLOR = {
   "Lead": "#8B93A7",
