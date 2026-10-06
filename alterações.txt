@@ -1,0 +1,5 @@
+dentro do kanban:
+Quando registro algum contato com empresa dentro do kamban, é registrado como atividade, mas quando entro no card da empresa, so tenho opção de  ver todas as tarefas, não consigo ver as atividades. PRECISO QUE TENHA UM BOTAO DE "VER TODAS AS ATIVIDADES";
+
+Cada interação no funil deve gerar uma atividade seguinte, um próximo passo com data e descrição, a não ser o que consideramos perdido, ai pode ficar no banco de dados sem mais interações;
+

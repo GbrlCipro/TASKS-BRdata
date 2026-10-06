@@ -35,15 +35,17 @@ const DEFAULT_CATEGORIES = [
 
 // Campos de CRM para Empresas/Pessoas (leads e cadastros)
 const ENTITY_TYPES = ["Cliente", "Prospect", "Parceiro", "Colaborador", "Fornecedor"];
-const CRM_STAGES = ["Lead", "Qualificação", "Proposta", "Acompanhamento", "Negociação", "Fechado", "Perdido"];
+const CRM_STAGES = ["Novo Lead", "Primeiro Contato", "Qualificação", "Interesse", "Demonstração", "Proposta Enviada", "Negociação", "Fechado-Ganho", "Fechado-Perdido"];
 const CRM_STAGE_COLOR = {
-  "Lead": "#8B93A7",
-  "Qualificação": "#5C7FA6",
-  "Proposta": "#C9A227",
-  "Acompanhamento": "#237CC0",
+  "Novo Lead": "#8B93A7",
+  "Primeiro Contato": "#5C7FA6",
+  "Qualificação": "#237CC0",
+  "Interesse": "#3BA6B8",
+  "Demonstração": "#8B5FBF",
+  "Proposta Enviada": "#C9A227",
   "Negociação": "#F08516",
-  "Fechado": "#2F9E5C",
-  "Perdido": "#D64545",
+  "Fechado-Ganho": "#2F9E5C",
+  "Fechado-Perdido": "#D64545",
 };
 const ORIGINS = [
   "Indicação (Parceiro)", "Indicação (Cliente)", "Indicação (Colaborador)",
@@ -431,6 +433,7 @@ export default function App() {
   const [personFilter, setPersonFilter] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [profileTarget, setProfileTarget] = useState(null); // { type: "company"|"person", id }
+  const [navStack, setNavStack] = useState([]); // pilha de { view, profileTarget } para o botão "Voltar"
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => getNotificationsEnabledPref());
   const [notificationPermission, setNotificationPermission] = useState(() => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"));
   const [bulkCompleteTarget, setBulkCompleteTarget] = useState(null); // array of task ids
@@ -602,6 +605,24 @@ export default function App() {
       const next = { ...prev };
       mutator(next);
       return next;
+    });
+  }
+
+  // Navegação com histórico: empilha a tela atual antes de "entrar" em outra
+  // (ex: abrir o perfil de uma empresa, ver todas as tarefas dela), para o
+  // botão "Voltar" conseguir desfazer passo a passo.
+  function navigateTo(nextView, nextProfileTarget) {
+    setNavStack((s) => [...s, { view, profileTarget }]);
+    setView(nextView);
+    if (nextProfileTarget !== undefined) setProfileTarget(nextProfileTarget);
+  }
+  function goBack() {
+    setNavStack((s) => {
+      if (s.length === 0) return s;
+      const prev = s[s.length - 1];
+      setView(prev.view);
+      setProfileTarget(prev.profileTarget);
+      return s.slice(0, -1);
     });
   }
 
@@ -1046,7 +1067,7 @@ export default function App() {
             <button
               key={n.id}
               className={`nav-item ${view === n.id ? "active" : ""}`}
-              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); setMobileNavOpen(false); }}
+              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); setMobileNavOpen(false); setNavStack([]); }}
             >
               <n.icon size={16} />
               <span>{n.label}</span>
@@ -1097,6 +1118,9 @@ export default function App() {
         )}
 
         <div className="content">
+          {navStack.length > 0 && (
+            <button className="btn btn-ghost btn-sm back-floating" onClick={goBack}><ChevronLeft size={14} /> Voltar</button>
+          )}
           {view === "rotina" && (
             <RotinaView
               overdue={overdue} dueToday={dueToday} dueTomorrow={dueTomorrow}
@@ -1155,14 +1179,14 @@ export default function App() {
               companies={data.companies} tasks={data.tasks} activities={data.activities} people={data.people}
               onNew={() => setCompanyModal("new")}
               onEdit={(c) => setCompanyModal(c)}
-              onSelect={(c) => { setProfileTarget({ type: "company", id: c.id }); setView("profile"); }}
+              onSelect={(c) => navigateTo("profile", { type: "company", id: c.id })}
             />
           )}
 
           {view === "prospeccao" && (
             <ProspeccaoView
               companies={data.companies}
-              onOpenCompany={(c) => { setProfileTarget({ type: "company", id: c.id }); setView("profile"); }}
+              onOpenCompany={(c) => navigateTo("profile", { type: "company", id: c.id })}
               onEditCompany={(c) => setCompanyModal(c)}
               onChangeStage={(id, stage, lostReason) => patchCompanyField(id, { crmStage: stage, lostReason: lostReason !== undefined ? lostReason : "" })}
               onLogContact={(c) => { setActivityFormPrefill({ companyId: c.id, fromProfile: true }); setActivityFormOpen(true); }}
@@ -1175,7 +1199,7 @@ export default function App() {
               people={data.people} companies={data.companies} tasks={data.tasks} activities={data.activities}
               onNew={() => setPersonModal("new")}
               onEdit={(p) => setPersonModal(p)}
-              onSelect={(p) => { setProfileTarget({ type: "person", id: p.id }); setView("profile"); }}
+              onSelect={(p) => navigateTo("profile", { type: "person", id: p.id })}
             />
           )}
 
@@ -1183,7 +1207,6 @@ export default function App() {
             <EntityProfile
               target={profileTarget}
               companies={data.companies} people={data.people} tasks={data.tasks} activities={data.activities}
-              onBack={() => setView(profileTarget.type === "company" ? "companies" : "people")}
               onEdit={() => {
                 if (profileTarget.type === "company") {
                   const c = data.companies.find((x) => x.id === profileTarget.id);
@@ -1195,11 +1218,11 @@ export default function App() {
               }}
               onOpenTask={openTaskDetail}
               onQuickComplete={requestComplete}
-              onOpenRelated={(type, id) => setProfileTarget({ type, id })}
+              onOpenRelated={(type, id) => navigateTo("profile", { type, id })}
               onSeeAllTasks={() => {
                 if (profileTarget.type === "company") setCompanyFilter(profileTarget.id);
                 else setPersonFilter(profileTarget.id);
-                setView("tasks");
+                navigateTo("tasks");
               }}
               onNewTask={() => {
                 setTaskFormPrefill({
@@ -1985,7 +2008,7 @@ function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage
     if (!company) return;
     const targetStage = col === "Sem etapa" ? "" : col;
     if (targetStage === company.crmStage) return;
-    if (targetStage === "Perdido") {
+    if (targetStage === "Fechado-Perdido") {
       setLostPending({ companyId, company });
     } else {
       onChangeStage(companyId, targetStage);
@@ -2006,7 +2029,7 @@ function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage
         {PROSPECCAO_COLUMNS.map((col) => (
           <div
             key={col}
-            className={`kanban-col ${dragOverCol === col ? "drag-over" : ""} ${col === "Perdido" ? "kanban-col-lost" : ""} ${col === "Fechado" ? "kanban-col-won" : ""}`}
+            className={`kanban-col ${dragOverCol === col ? "drag-over" : ""} ${col === "Fechado-Perdido" ? "kanban-col-lost" : ""} ${col === "Fechado-Ganho" ? "kanban-col-won" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragOverCol(col); }}
             onDragLeave={() => setDragOverCol((c) => (c === col ? null : c))}
             onDrop={(e) => handleDrop(e, col)}
@@ -2034,7 +2057,7 @@ function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage
           company={lostPending.company}
           onCancel={() => setLostPending(null)}
           onConfirm={(reason) => {
-            onChangeStage(lostPending.companyId, "Perdido", reason);
+            onChangeStage(lostPending.companyId, "Fechado-Perdido", reason);
             setLostPending(null);
           }}
         />
@@ -2126,14 +2149,13 @@ function CommercialSummaryBox({ companyId, value, onSave }) {
    ENTITY PROFILE (empresa ou pessoa — resumo + histórico)
    ============================================================ */
 
-function EntityProfile({ target, companies, people, tasks, activities, onBack, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete, onUpdateCommercialSummary }) {
+function EntityProfile({ target, companies, people, tasks, activities, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete, onUpdateCommercialSummary }) {
   const isCompany = target.type === "company";
   const entity = isCompany ? companies.find((c) => c.id === target.id) : people.find((p) => p.id === target.id);
 
   if (!entity) {
     return (
       <div className="view">
-        <button className="btn btn-ghost btn-sm" onClick={onBack}><ChevronLeft size={14} /> Voltar</button>
         <EmptyState icon={isCompany ? Building2 : Users} title="Registro não encontrado" hint="Pode ter sido removido." />
       </div>
     );
@@ -2158,8 +2180,6 @@ function EntityProfile({ target, companies, people, tasks, activities, onBack, o
 
   return (
     <div className="view profile-view">
-      <button className="btn btn-ghost btn-sm profile-back" onClick={onBack}><ChevronLeft size={14} /> Voltar</button>
-
       <div className="view-header">
         <div>
           <div className="profile-heading">
@@ -3574,8 +3594,8 @@ function Style() {
       .mobile-nav-backdrop { display: none; }
       .mobile-nav-close { display: none; cursor: pointer; color: var(--ink-soft); margin-left: auto; }
 
+      .back-floating { margin-bottom: 14px; }
       .profile-view { max-width: 760px; }
-      .profile-back { margin-bottom: 10px; }
       .profile-heading { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); }
       .profile-heading h1 { color: var(--ink); }
       .profile-actions { display: flex; gap: 6px; }
