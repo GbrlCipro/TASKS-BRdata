@@ -374,7 +374,7 @@ function IconBtn({ icon: Icon, onClick, title, danger }) {
    TASK CARD (used across views)
    ============================================================ */
 
-function TaskRow({ task, companies, people, onOpen, onQuickComplete, bulkMode, selected, onToggleSelect }) {
+function TaskRow({ task, companies, people, onOpen, onQuickComplete, bulkMode, selected, onToggleSelect, tag }) {
   const company = companies.find((c) => c.id === task.companyId);
   const person = people.find((p) => p.id === task.personId);
   const overdue = isOverdue(task);
@@ -403,6 +403,7 @@ function TaskRow({ task, companies, people, onOpen, onQuickComplete, bulkMode, s
           )}
         </div>
       </div>
+      {tag && <span className="row-tag" style={{ color: tag.color, background: tag.color + "18" }}>{tag.label}</span>}
       <PriorityBadge priority={task.priority} />
       <ChevronRight size={15} className="row-chevron" />
     </div>
@@ -1487,8 +1488,30 @@ function Section({ title, icon: Icon, count, tone, children, collapsedHint }) {
   );
 }
 
+const ROTINA_TAG = {
+  overdue: { label: "Atrasada", color: "#D64545" },
+  today: { label: "Hoje", color: "#237CC0" },
+  tomorrow: { label: "Amanhã", color: "#C9A227" },
+  upcoming: { label: "Em breve", color: "#F08516" },
+  noDate: { label: "Sem prazo", color: "#8B93A7" },
+};
+
 function RotinaView({ overdue, dueToday, dueTomorrow, upcoming, noDate, recurring, recentActivities, companies, people, onOpen, onQuickComplete, onNewTask }) {
   const activeRecurring = recurring.filter((r) => r.active);
+  const [filter, setFilter] = useState(null); // null = tudo junto | "overdue" | "today" | "tomorrow" | "upcoming"
+
+  const stats = [
+    { key: "overdue", icon: AlertCircle, items: overdue, label: "Atrasadas" },
+    { key: "today", icon: Circle, items: dueToday, label: "Hoje" },
+    { key: "tomorrow", icon: CircleDot, items: dueTomorrow, label: "Amanhã" },
+    { key: "upcoming", icon: ArrowRight, items: upcoming, label: "Próximas" },
+  ];
+
+  let combined = [];
+  stats.forEach((s) => s.items.forEach((t) => combined.push({ task: t, tagKey: s.key })));
+  noDate.forEach((t) => combined.push({ task: t, tagKey: "noDate" }));
+  const visible = filter ? combined.filter((x) => x.tagKey === filter) : combined;
+
   return (
     <div className="view rotina-view">
       <div className="view-header">
@@ -1499,25 +1522,39 @@ function RotinaView({ overdue, dueToday, dueTomorrow, upcoming, noDate, recurrin
         <button className="btn btn-primary" onClick={onNewTask}><Plus size={14} /> Nova tarefa</button>
       </div>
 
+      <div className="rotina-stats">
+        {stats.map((s) => (
+          <button
+            key={s.key}
+            className={`rotina-stat ${filter === s.key ? "active" : ""}`}
+            style={{ "--sc": ROTINA_TAG[s.key].color }}
+            onClick={() => setFilter(filter === s.key ? null : s.key)}
+          >
+            <s.icon size={16} />
+            <span className="rotina-stat-value">{s.items.length}</span>
+            <span className="rotina-stat-label">{s.label}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="rotina-grid">
         <div className="rotina-col">
-          <Section title="Atrasadas" icon={AlertCircle} count={overdue.length} tone="danger" collapsedHint="Nenhuma tarefa atrasada. Ótimo sinal.">
-            {overdue.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
-          </Section>
-          <Section title="Hoje" icon={Circle} count={dueToday.length} tone="today" collapsedHint="Nada previsto para hoje.">
-            {dueToday.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
-          </Section>
-          <Section title="Amanhã" icon={CircleDot} count={dueTomorrow.length} tone="tomorrow" collapsedHint="Nada previsto para amanhã.">
-            {dueTomorrow.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
-          </Section>
-          <Section title="Próximas" icon={ArrowRight} count={upcoming.length} tone="next" collapsedHint="Sem tarefas futuras agendadas.">
-            {upcoming.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
-          </Section>
-          {noDate.length > 0 && (
-            <Section title="Sem prazo definido" icon={Clock} count={noDate.length} tone="muted">
-              {noDate.map((t) => <TaskRow key={t.id} task={t} companies={companies} people={people} onOpen={onOpen} onQuickComplete={onQuickComplete} />)}
-            </Section>
-          )}
+          <div className="task-list rotina-unified-list">
+            {visible.length === 0 && (
+              <EmptyState
+                icon={CheckSquare}
+                title={filter ? "Nada neste grupo" : "Tudo em dia"}
+                hint={filter ? "Nenhuma tarefa aqui no momento." : "Nenhuma tarefa pendente com prazo definido."}
+              />
+            )}
+            {visible.map(({ task, tagKey }) => (
+              <TaskRow
+                key={task.id} task={task} companies={companies} people={people}
+                onOpen={onOpen} onQuickComplete={onQuickComplete}
+                tag={!filter ? ROTINA_TAG[tagKey] : null}
+              />
+            ))}
+          </div>
         </div>
 
         <div className="rotina-side">
@@ -1866,22 +1903,37 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova empresa</button>
       </div>
-      <div className="filters-bar">
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
-          <option value="recent">Mais recentes primeiro</option>
+      <div className="pill-filters">
+        <select className="pill-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+          <option value="recent">Mais recentes</option>
           <option value="name">Nome (A-Z)</option>
         </select>
-        <select value={entityTypeFilter} onChange={(e) => setEntityTypeFilter(e.target.value)} title="Filtrar por tipo">
-          <option value="Todos">Todos os tipos</option>
-          {ENTITY_TYPES.map((t) => <option key={t}>{t}</option>)}
-        </select>
-        <select value={crmStageFilter} onChange={(e) => setCrmStageFilter(e.target.value)} title="Filtrar por etapa do CRM">
+
+        <div className="pill-row">
+          <button type="button" className={`pill ${entityTypeFilter === "Todos" ? "active" : ""}`} onClick={() => setEntityTypeFilter("Todos")}>Todos</button>
+          {ENTITY_TYPES.map((t) => (
+            <button key={t} type="button" className={`pill ${entityTypeFilter === t ? "active" : ""}`} onClick={() => setEntityTypeFilter(entityTypeFilter === t ? "Todos" : t)}>{t}</button>
+          ))}
+        </div>
+
+        <div className="pill-row">
+          <button type="button" className={`pill ${classificationFilter === "Todas" ? "active" : ""}`} onClick={() => setClassificationFilter("Todas")}>Todas</button>
+          {CLASSIFICATIONS.map((c) => {
+            const active = classificationFilter === c;
+            return (
+              <button
+                key={c} type="button"
+                className={`pill pill-dot ${active ? "active" : ""}`}
+                style={active ? { background: CLASSIFICATION_COLOR[c], borderColor: CLASSIFICATION_COLOR[c], color: "#fff" } : { color: CLASSIFICATION_COLOR[c], borderColor: CLASSIFICATION_COLOR[c] + "55" }}
+                onClick={() => setClassificationFilter(active ? "Todas" : c)}
+              >{c}</button>
+            );
+          })}
+        </div>
+
+        <select className="pill-select" value={crmStageFilter} onChange={(e) => setCrmStageFilter(e.target.value)} title="Filtrar por etapa do CRM">
           <option value="Todas">Todas as etapas</option>
           {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select value={classificationFilter} onChange={(e) => setClassificationFilter(e.target.value)} title="Filtrar por classificação">
-          <option value="Todas">Todas as classes</option>
-          {CLASSIFICATIONS.map((c) => <option key={c}>Classe {c}</option>)}
         </select>
       </div>
       <div className="grid-cards">
@@ -1892,10 +1944,17 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
           const aCount = activities.filter((a) => a.companyId === c.id).length;
           const pCount = people.filter((p) => p.companyId === c.id).length;
           const contact = c.contactPersonId ? people.find((p) => p.id === c.contactPersonId) : null;
+          const avatarColor = c.classification ? CLASSIFICATION_COLOR[c.classification] : "#8B93A7";
           return (
             <div key={c.id} className="entity-card" onClick={() => onSelect(c)}>
               <div className="entity-card-head">
-                <div className="entity-name"><Building2 size={14} /> {c.name}</div>
+                <div className="entity-avatar" style={{ background: avatarColor + "1F", color: avatarColor }}>
+                  {(c.name || "?").trim().charAt(0).toUpperCase()}
+                </div>
+                <div className="entity-card-headtext">
+                  <div className="entity-name">{c.name}</div>
+                  {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
+                </div>
                 <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
               </div>
               {(c.entityType || c.crmStage || c.classification) && (
@@ -1905,7 +1964,6 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                   <ClassificationBadge classification={c.classification} />
                 </div>
               )}
-              {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
               <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
               {(contact || c.address || c.phone) && (
                 <div className="entity-contact">
@@ -3257,7 +3315,7 @@ function Style() {
         --ink-soft: #545E70;
         --bg: #F5F6F9;
         --panel: #FFFFFF;
-        --border: #E4E7EE;
+        --border: #EDEFF3;
         --accent: #237CC0;
         --accent-soft: #237CC014;
         --brand-blue: #F08516;
@@ -3268,10 +3326,12 @@ function Style() {
         --next: #F08516;
         --hover: rgba(28,34,48,0.045);
         --input-bg: #FFFFFF;
-        --radius: 8px;
-        --mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, monospace;
+        --radius: 14px;
         --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        --mono: var(--sans);
         --display: 'Sora', 'Inter', sans-serif;
+        --shadow-card: 0 1px 2px rgba(16,24,40,0.04), 0 4px 12px rgba(16,24,40,0.07);
+        --shadow-card-hover: 0 4px 10px rgba(16,24,40,0.07), 0 10px 22px rgba(16,24,40,0.10);
       }
       [data-theme="dark"] {
         color-scheme: dark;
@@ -3290,12 +3350,22 @@ function Style() {
         --next: #F08516;
         --hover: rgba(255,255,255,0.05);
         --input-bg: #12151C;
+        --shadow-card: 0 1px 2px rgba(0,0,0,0.3), 0 4px 14px rgba(0,0,0,0.35);
+        --shadow-card-hover: 0 4px 10px rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.4);
       }
       [data-theme="dark"] .app-root img { opacity: 0.94; }
       * { box-sizing: border-box; }
+      .side-card, .entity-card, .stat-card, .activity-card, .kanban-card, .task-list, .section,
+      .inbox-list, .commercial-summary-box {
+        box-shadow: var(--shadow-card);
+      }
+      .kanban-card { transition: transform .15s ease, box-shadow .15s ease; }
+      .kanban-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+      .stat-card, .activity-card { transition: box-shadow .15s ease; }
+      .stat-card:hover, .activity-card:hover { box-shadow: var(--shadow-card-hover); }
       input, select, textarea { background: var(--input-bg); color: var(--ink); font-family: inherit; }
       input::placeholder, textarea::placeholder { color: var(--ink-soft); opacity: 0.7; }
-      .app-root { display: flex; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13.5px; }
+      .app-root { display: flex; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14.5px; }
       .loading-root { align-items: center; justify-content: center; }
       .loading-box { color: var(--ink-soft); }
 
@@ -3309,9 +3379,10 @@ function Style() {
       .theme-toggle { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); cursor: pointer; flex-shrink: 0; }
       .theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
       .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-      .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none; background: transparent; border-radius: 7px; cursor: pointer; color: var(--ink-soft); font-size: 13px; text-align: left; font-family: var(--sans); }
+      .nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: none; background: transparent; border-radius: 9px; cursor: pointer; color: var(--ink-soft); font-size: 13px; text-align: left; font-family: var(--sans); transition: background .1s ease; }
       .nav-item:hover { background: var(--hover); color: var(--ink); }
-      .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+      .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+      .nav-item.active::before { content: ''; position: absolute; left: -12px; top: 50%; transform: translateY(-50%); width: 3px; height: 18px; background: var(--accent); border-radius: 0 3px 3px 0; }
       .nav-item span:first-of-type { flex: 1; }
       .nav-count { background: #DDE2EA; color: var(--ink-soft); font-size: 10.5px; padding: 1px 6px; border-radius: 10px; font-family: var(--mono); }
       .nav-count.danger { background: var(--danger); color: #fff; }
@@ -3326,15 +3397,15 @@ function Style() {
       .clear-x { cursor: pointer; }
       .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
 
-      .content { padding: 22px 26px 60px; overflow-y: auto; }
-      .view { max-width: 980px; }
-      .view-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; gap: 12px; }
-      .view-header h1 { font-family: var(--display); font-size: 20px; margin: 0 0 3px; font-weight: 650; }
+      .content { padding: 30px 34px 60px; overflow-y: auto; }
+      .view-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 26px; gap: 12px; }
+      .view-header h1 { font-family: var(--display); font-size: 25px; margin: 0 0 4px; font-weight: 700; letter-spacing: -0.01em; }
       .view-sub { color: var(--ink-soft); font-size: 12.5px; margin: 0; }
 
       /* Buttons */
-      .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 7px; padding: 8px 13px; font-size: 12.5px; font-weight: 550; cursor: pointer; border: 1px solid transparent; font-family: var(--sans); white-space: nowrap; }
-      .btn-primary { background: var(--accent); color: #fff; }
+      .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 10px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; font-family: var(--sans); white-space: nowrap; transition: transform .1s ease, box-shadow .15s ease; }
+      .btn-primary:hover { transform: translateY(-1px); }
+      .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 1px 2px rgba(35,124,192,0.25); }
       .btn-primary:hover { background: #0C5A51; }
       .btn-ghost { background: var(--panel); color: var(--ink); border-color: var(--border); }
       .btn-ghost:hover { background: var(--bg); }
@@ -3346,6 +3417,14 @@ function Style() {
       .icon-btn.danger:hover { background: #FCE9E9; color: var(--danger); border-color: #F3C6C6; }
 
       /* Sections (rotina) */
+      .rotina-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+      .rotina-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow-card); transition: transform .15s ease, box-shadow .15s ease; text-align: left; font-family: var(--sans); color: var(--sc); }
+      .rotina-stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+      .rotina-stat.active { outline: 2px solid var(--sc); outline-offset: -2px; }
+      .rotina-stat-value { font-family: var(--display); font-size: 26px; font-weight: 700; color: var(--ink); }
+      .rotina-stat-label { font-size: 11.5px; color: var(--sc); font-weight: 700; }
+      .rotina-unified-list .task-row:first-child { border-top: none; }
+      .row-tag { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
       .rotina-grid { display: grid; grid-template-columns: 1fr 260px; gap: 24px; align-items: start; }
       .rotina-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
       .section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -3381,7 +3460,7 @@ function Style() {
       .task-row-title { font-weight: 550; font-size: 13px; display: flex; align-items: center; gap: 6px; }
       .inline-icon { color: var(--ink-soft); }
       .task-row-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-      .meta-chip { display: inline-flex; align-items: center; gap: 3px; background: var(--bg); color: var(--ink-soft); font-size: 10.5px; padding: 2px 7px; border-radius: 5px; font-family: var(--mono); }
+      .meta-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg); color: var(--ink-soft); font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 500; }
       .meta-overdue { background: #FCE9E9; color: var(--danger); }
       .row-chevron { color: #C7CDD8; flex-shrink: 0; }
 
@@ -3405,6 +3484,13 @@ function Style() {
 
       /* Filters bar */
       .filters-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+      .pill-filters { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+      .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
+      .pill { border: 1px solid var(--border); background: var(--panel); color: var(--ink-soft); font-size: 11.5px; font-weight: 600; padding: 6px 13px; border-radius: 20px; cursor: pointer; font-family: var(--sans); transition: all .12s ease; }
+      .pill:hover { border-color: var(--accent); color: var(--ink); }
+      .pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .pill-dot { padding: 6px 11px; min-width: 32px; text-align: center; background: var(--panel); }
+      .pill-select { border: 1px solid var(--border); border-radius: 20px; padding: 7px 14px; font-size: 11.5px; font-weight: 600; background: var(--panel); color: var(--ink-soft); font-family: var(--sans); cursor: pointer; }
       .filters-bar select, .filters-bar input { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 12px; background: var(--panel); color: var(--ink); }
       .filters-search { flex: 1; min-width: 180px; }
       .task-list { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -3436,17 +3522,19 @@ function Style() {
       .inline-add input, .inline-add select { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 12.5px; background: var(--panel); }
       .inline-add input { flex: 1; max-width: 320px; }
       .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-      .entity-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 14px; cursor: pointer; }
-      .entity-card:hover { border-color: var(--accent); }
+      .entity-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
+      .entity-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
       .entity-name { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
       .entity-stats { font-size: 11px; color: var(--ink-soft); }
       .entity-role { font-size: 11.5px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
       .entity-crm-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
       .entity-contact { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--ink-soft); font-family: var(--mono); margin-top: 6px; }
       .entity-contact span { display: inline-flex; align-items: center; gap: 4px; }
-      .entity-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+      .entity-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
       .entity-card-head .entity-name { margin-bottom: 0; }
-      .entity-edit-btn { opacity: 0; flex-shrink: 0; }
+      .entity-card-headtext { flex: 1; min-width: 0; }
+      .entity-avatar { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 14px; flex-shrink: 0; }
+      .entity-edit-btn { opacity: 0; flex-shrink: 0; margin-left: auto; }
       .entity-card:hover .entity-edit-btn { opacity: 1; }
 
       /* Prospecção (kanban) */
