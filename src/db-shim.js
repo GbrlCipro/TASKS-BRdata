@@ -83,6 +83,8 @@ function companyFromRow(r) {
     entityType: r.entity_type || "", crmStage: r.crm_stage || "", origin: r.origin || "",
     classification: r.classification || "",
     commercialSummary: r.commercial_summary || "", lostReason: r.lost_reason || "",
+    razaoSocial: r.razao_social || "", cnpj: r.cnpj || "", cep: r.cep || "", uf: r.uf || "",
+    street: r.street || "", addressNumber: r.address_number || "", neighborhood: r.neighborhood || "", complement: r.complement || "",
     notes: r.notes || "",
   };
 }
@@ -91,6 +93,8 @@ const COMPANY_FIELD_MAP = {
   phone: "phone", contactPersonId: "contact_person_id",
   entityType: "entity_type", crmStage: "crm_stage", origin: "origin", classification: "classification",
   commercialSummary: "commercial_summary", lostReason: "lost_reason",
+  razaoSocial: "razao_social", cnpj: "cnpj", cep: "cep", uf: "uf",
+  street: "street", addressNumber: "address_number", neighborhood: "neighborhood", complement: "complement",
   notes: "notes",
 };
 

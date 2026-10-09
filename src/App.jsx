@@ -917,6 +917,8 @@ export default function App() {
       name: (form.name || "").trim() || undefined,
       segment: form.segment || "", city: form.city || "",
       address: form.address || "", location: form.location || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      razaoSocial: form.razaoSocial || "", cnpj: form.cnpj || "", cep: form.cep || "", uf: form.uf || "",
+      street: form.street || "", addressNumber: form.addressNumber || "", neighborhood: form.neighborhood || "", complement: form.complement || "",
       entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
       classification: form.classification || "",
       notes: form.notes || "",
@@ -952,6 +954,8 @@ export default function App() {
     const company = {
       id, name: trimmed, segment: form.segment || "", city: form.city || "",
       address: form.address || "", location: form.location || "", phone: form.phone || "", contactPersonId: form.contactPersonId || null,
+      razaoSocial: form.razaoSocial || "", cnpj: form.cnpj || "", cep: form.cep || "", uf: form.uf || "",
+      street: form.street || "", addressNumber: form.addressNumber || "", neighborhood: form.neighborhood || "", complement: form.complement || "",
       entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
       classification: form.classification || "",
       notes: form.notes || "",
@@ -1422,14 +1426,16 @@ export default function App() {
       )}
 
       {companyModal && (
-        <CompanyFormModal
+        <CompanyFormPage
           editing={companyModal === "new" ? null : companyModal}
           people={data.people}
           onCreatePerson={upsertPerson}
           onClose={() => setCompanyModal(null)}
-          onSubmit={(form) => {
-            if (companyModal === "new") upsertCompanyFull(form);
-            else patchCompany(companyModal.id, form);
+          onSubmit={(form, newContacts) => {
+            let id;
+            if (companyModal === "new") id = upsertCompanyFull(form);
+            else { patchCompany(companyModal.id, form); id = companyModal.id; }
+            (newContacts || []).forEach((c) => addPersonFull({ ...c, companyId: id }));
             setCompanyModal(null);
           }}
         />
@@ -2284,6 +2290,12 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
         </div>
       )}
+      {isCompany && (entity.razaoSocial || entity.cnpj) && (
+        <div className="profile-contact-row">
+          {entity.razaoSocial && <span>{entity.razaoSocial}</span>}
+          {entity.cnpj && <span>CNPJ {entity.cnpj}</span>}
+        </div>
+      )}
       {isCompany && (entity.phone || entity.address || entity.location) && (
         <div className="profile-contact-row">
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
@@ -2839,10 +2851,34 @@ function EntityPicker({ label, options, value, onChange, onCreate, placeholder }
 }
 
 /* ============================================================
+   FORMULÁRIO EM PÁGINA CHEIA (casca comum com abas)
+   ============================================================ */
+
+function FormPageShell({ title, tabs, tab, setTab, onClose, onSave, children }) {
+  return (
+    <div className="form-page">
+      <div className="form-page-bar">
+        <button type="button" className="form-page-back" onClick={onClose} title="Voltar"><ChevronLeft size={22} /></button>
+        <div className="form-page-tabs">
+          {tabs.length > 1 && tabs.map(([id, label]) => (
+            <button key={id} type="button" className={`form-page-tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>
+          ))}
+        </div>
+        <button type="button" className="btn btn-primary" onClick={onSave}>Salvar</button>
+      </div>
+      <div className="form-page-body">
+        <div className="form-page-card edit-form">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    TASK FORM MODAL
    ============================================================ */
 
 function TaskFormModal({ prefill, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
+  const [tab, setTab] = useState("geral");
   const base = prefill && prefill.inInbox ? prefill : prefill && prefill.fromActivity ? {
     title: "", companyId: prefill.fromActivity.companyId, personId: prefill.fromActivity.personId, category: prefill.fromActivity.category,
   } : prefill && prefill.fromProfile ? {
@@ -2875,19 +2911,25 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
     onSubmit(form, wantsNext ? nextForm : null);
   }
 
+  const taskTitle = isFromActivity ? "Gerar tarefa a partir da atividade" : prefill && prefill.inInbox ? "Processar item da caixa de entrada" : "Nova tarefa";
+  function save(e) {
+    if (!form.title.trim()) { setTab("geral"); return; }
+    if (wantsNext && !nextForm.title.trim()) { setTab("detalhes"); return; }
+    submit(e);
+  }
+
   return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{isFromActivity ? "Gerar tarefa a partir da atividade" : prefill && prefill.inInbox ? "Processar item da caixa de entrada" : "Nova tarefa"}</h3>
-          <X size={16} onClick={onClose} />
-        </div>
-        <div className="modal-body">
-          <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
-          <label>Descrição<textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+    <FormPageShell
+      title={taskTitle}
+      tabs={[["geral", "GERAL"], ["prazo", "PRAZO E VÍNCULOS"], ["detalhes", "DETALHES"]]}
+      tab={tab} setTab={setTab} onClose={onClose} onSave={save}
+    >
+      {tab === "geral" && (
+        <>
+          <div className="form-page-section">INFORMAÇÕES</div>
+          <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
+          <label>Descrição<textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
           <div className="edit-grid">
-            <label>Prazo<input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></label>
-            <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
             <label>Prioridade
               <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
                 {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
@@ -2906,11 +2948,28 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
             </label>
             <label>Subcategoria<input value={form.subcategory} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
           </div>
+        </>
+      )}
+
+      {tab === "prazo" && (
+        <>
+          <div className="form-page-section">PRAZO</div>
+          <div className="edit-grid">
+            <label>Prazo<input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></label>
+            <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
+          </div>
+          <div className="form-page-section">VÍNCULOS</div>
           <div className="edit-grid">
             <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
             <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
-          <label>Observações<textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
+        </>
+      )}
+
+      {tab === "detalhes" && (
+        <>
+          <div className="form-page-section">OBSERVAÇÕES E ANEXOS</div>
+          <label>Observações<textarea rows={4} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label>Anexos (link ou referência)<input value={form.attachmentsNote} onChange={(e) => setForm({ ...form, attachmentsNote: e.target.value })} /></label>
 
           <div className="next-step-toggle" onClick={() => setWantsNext((v) => !v)}>
@@ -2920,11 +2979,7 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
           {wantsNext && (
             <div className="next-step-form">
               <label>Título do próximo passo
-                <input
-                  placeholder='Ex: "Fazer follow-up com o cliente"'
-                  value={nextForm.title}
-                  onChange={(e) => setNextForm({ ...nextForm, title: e.target.value })}
-                />
+                <input placeholder='Ex: "Fazer follow-up com o cliente"' value={nextForm.title} onChange={(e) => setNextForm({ ...nextForm, title: e.target.value })} />
               </label>
               <label>Descrição do próximo passo
                 <textarea rows={2} value={nextForm.description} onChange={(e) => setNextForm({ ...nextForm, description: e.target.value })} />
@@ -2940,14 +2995,9 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
               <div className="next-step-hint">Empresa, pessoa e categoria serão herdadas da tarefa acima — dá para ajustar depois, na própria tarefa.</div>
             </div>
           )}
-
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>Salvar tarefa</button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </FormPageShell>
   );
 }
 
@@ -2956,6 +3006,7 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
    ============================================================ */
 
 function ActivityFormModal({ prefill, editing, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
+  const [tab, setTab] = useState("geral");
   const [form, setForm] = useState({
     title: editing?.title || "",
     description: editing?.description || "",
@@ -2969,16 +3020,21 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
     if (!form.title.trim()) return;
     onSubmit(form);
   }
+  function save(e) {
+    if (!form.title.trim()) { setTab("geral"); return; }
+    submit(e);
+  }
   return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{editing ? "Editar atividade" : "Nova atividade"}</h3>
-          <X size={16} onClick={onClose} />
-        </div>
-        <div className="modal-body">
-          <label>O que aconteceu?<input autoFocus required placeholder='Ex: "Cliente respondeu pedindo para retornar na sexta"' value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
-          <label>Detalhes<textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+    <FormPageShell
+      title={editing ? "Editar atividade" : "Nova atividade"}
+      tabs={[["geral", "GERAL"], ["vinculos", "VÍNCULOS"]]}
+      tab={tab} setTab={setTab} onClose={onClose} onSave={save}
+    >
+      {tab === "geral" && (
+        <>
+          <div className="form-page-section">INFORMAÇÕES</div>
+          <label>O que aconteceu?<input autoFocus required placeholder='Ex: "Cliente respondeu pedindo para retornar na sexta"' value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
+          <label>Detalhes<textarea rows={6} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
           <div className="edit-grid">
             <label>Categoria
               <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -2993,17 +3049,18 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
               </select>
             </label>
           </div>
+        </>
+      )}
+      {tab === "vinculos" && (
+        <>
+          <div className="form-page-section">VÍNCULOS</div>
           <div className="edit-grid">
             <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
             <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Registrar atividade"}</button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </FormPageShell>
   );
 }
 
@@ -3012,6 +3069,7 @@ function ActivityFormModal({ prefill, editing, companies, people, categories, on
    ============================================================ */
 
 function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompany }) {
+  const [tab, setTab] = useState("geral");
   const [form, setForm] = useState({
     name: editing?.name || "", role: editing?.role || "", companyId: editing?.companyId || null,
     email: editing?.email || "", phone: editing?.phone || "", notes: editing?.notes || "",
@@ -3023,29 +3081,37 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
     onSubmit(form);
   }
 
+  function save(e) {
+    if (!form.name.trim()) { setTab("geral"); return; }
+    submit(e);
+  }
   return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{editing ? "Editar pessoa" : "Nova pessoa"}</h3>
-          <X size={16} onClick={onClose} />
-        </div>
-        <div className="modal-body">
-          <label>Nome<input autoFocus required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
-          <label>Cargo / função na instituição<input placeholder="Ex: Gerente Comercial, Sócio, Financeiro…" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} /></label>
-          <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id })} onCreate={onCreateCompany} />
+    <FormPageShell
+      title={editing ? "Editar pessoa" : "Nova pessoa"}
+      tabs={[["geral", "GERAL"], ["contato", "CONTATO"]]}
+      tab={tab} setTab={setTab} onClose={onClose} onSave={save}
+    >
+      {tab === "geral" && (
+        <>
+          <div className="form-page-section">INFORMAÇÕES</div>
+          <div className="edit-grid">
+            <label>Nome<input autoFocus required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
+            <label>Cargo / função na instituição<input placeholder="Ex: Gerente Comercial, Sócio, Financeiro…" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} /></label>
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id })} onCreate={onCreateCompany} />
+          </div>
+          <label>Observações<textarea rows={6} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
+        </>
+      )}
+      {tab === "contato" && (
+        <>
+          <div className="form-page-section">CONTATO</div>
           <div className="edit-grid">
             <label>E-mail<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
             <label>Telefone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
           </div>
-          <label>Observações<textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Salvar pessoa"}</button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </FormPageShell>
   );
 }
 
@@ -3053,80 +3119,150 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
    COMPANY FORM MODAL
    ============================================================ */
 
-function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }) {
+function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson }) {
+  const [tab, setTab] = useState("geral");
   const [form, setForm] = useState({
-    name: editing?.name || "", segment: editing?.segment || "", city: editing?.city || "",
-    address: editing?.address || "", location: editing?.location || "", phone: editing?.phone || "",
+    name: editing?.name || "", razaoSocial: editing?.razaoSocial || "", cnpj: editing?.cnpj || "",
+    segment: editing?.segment || "", city: editing?.city || "", uf: editing?.uf || "",
+    cep: editing?.cep || "",
+    street: editing?.street || (editing && !editing.street ? editing.address || "" : ""),
+    addressNumber: editing?.addressNumber || "", neighborhood: editing?.neighborhood || "",
+    complement: editing?.complement || "",
+    location: editing?.location || "", phone: editing?.phone || "",
     contactPersonId: editing?.contactPersonId || null,
     entityType: editing?.entityType || "", crmStage: editing?.crmStage || "", origin: editing?.origin || "",
     classification: editing?.classification || "",
     notes: editing?.notes || "",
   });
+  const [contactDrafts, setContactDrafts] = useState([]);
+  const [contactForm, setContactForm] = useState({ name: "", role: "", phone: "", email: "" });
+  const linkedPeople = editing ? people.filter((p) => p.companyId === editing.id) : [];
 
-  function submit(e) {
-    if (e && e.preventDefault) e.preventDefault();
-    if (!form.name.trim()) return;
-    onSubmit(form);
+  function addContactDraft() {
+    if (!contactForm.name.trim()) return;
+    setContactDrafts((d) => [...d, contactForm]);
+    setContactForm({ name: "", role: "", phone: "", email: "" });
   }
 
+  function submit() {
+    if (!form.name.trim()) { setTab("geral"); return; }
+    const address = [form.street, form.addressNumber, form.neighborhood, form.complement]
+      .map((x) => (x || "").trim()).filter(Boolean).join(", ");
+    onSubmit({ ...form, address }, contactDrafts);
+  }
+
+  const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const TABS = [["geral", "GERAL"], ["enderecos", "ENDEREÇOS"], ["contato", "CONTATO"]];
+
   return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{editing ? "Editar empresa" : "Nova empresa"}</h3>
-          <X size={16} onClick={onClose} />
+    <div className="form-page">
+      <div className="form-page-bar">
+        <button type="button" className="form-page-back" onClick={onClose} title="Voltar"><ChevronLeft size={22} /></button>
+        <div className="form-page-tabs">
+          {TABS.map(([id, label]) => (
+            <button key={id} type="button" className={`form-page-tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>
+          ))}
         </div>
-        <div className="modal-body">
-          <label>Nome<input autoFocus required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
-          <div className="edit-grid">
-            <label>O que ele é?
-              <select value={form.entityType} onChange={(e) => setForm({ ...form, entityType: e.target.value })}>
-                <option value="">—</option>
-                {ENTITY_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select>
-            </label>
-            <label>Etapa do CRM
-              <select value={form.crmStage} onChange={(e) => setForm({ ...form, crmStage: e.target.value })}>
-                <option value="">—</option>
-                {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
-              </select>
-            </label>
-            <label>Origem
-              <select value={form.origin} onChange={(e) => setForm({ ...form, origin: e.target.value })}>
-                <option value="">—</option>
-                {ORIGINS.map((o) => <option key={o}>{o}</option>)}
-              </select>
-            </label>
-            <label>Classificação
-              <select value={form.classification} onChange={(e) => setForm({ ...form, classification: e.target.value })}>
-                <option value="">—</option>
-                {CLASSIFICATIONS.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-            <label>Atividade / Segmento<input list="segment-options" placeholder="Ex: Agronegócio…" value={form.segment} onChange={(e) => setForm({ ...form, segment: e.target.value })} /></label>
-            <datalist id="segment-options">
-              {SEGMENTS.map((s) => <option key={s} value={s} />)}
-            </datalist>
-            <label>Cidade<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label>
-          </div>
-          <label>Endereço<input placeholder="Rua, número, bairro…" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label>
-          <label>Localização (link do Google Maps, coordenadas, ou referência de acesso)<input placeholder="Cole aqui o link do mapa ou uma referência de localização" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></label>
-          <div className="edit-grid">
-            <label>Telefone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
-            <EntityPicker
-              label="Pessoa de contato"
-              options={people}
-              value={form.contactPersonId}
-              onChange={(id) => setForm({ ...form, contactPersonId: id })}
-              onCreate={(name) => onCreatePerson(name, null)}
-              placeholder="Selecionar…"
-            />
-          </div>
-          <label>Observações<textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Salvar empresa"}</button>
-          </div>
+        <button type="button" className="btn btn-primary" onClick={submit}>Salvar</button>
+      </div>
+
+      <div className="form-page-body">
+        <div className="form-page-card edit-form">
+          {tab === "geral" && (
+            <>
+              <div className="form-page-section">INFORMAÇÕES</div>
+              <div className="edit-grid">
+                <label>Nome / Nome Fantasia *<input autoFocus value={form.name} onChange={f("name")} /></label>
+                <label>Razão Social<input value={form.razaoSocial} onChange={f("razaoSocial")} /></label>
+                <label>CNPJ<input placeholder="00.000.000/0000-00" value={form.cnpj} onChange={f("cnpj")} /></label>
+                <label>O que ele é?
+                  <select value={form.entityType} onChange={f("entityType")}>
+                    <option value="">—</option>
+                    {ENTITY_TYPES.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </label>
+                <label>Etapa do CRM
+                  <select value={form.crmStage} onChange={f("crmStage")}>
+                    <option value="">—</option>
+                    {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                </label>
+                <label>Origem do cliente
+                  <select value={form.origin} onChange={f("origin")}>
+                    <option value="">—</option>
+                    {ORIGINS.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </label>
+                <label>Atividade / Segmento<input list="segment-options" placeholder="Ex: Agronegócio…" value={form.segment} onChange={f("segment")} /></label>
+                <datalist id="segment-options">
+                  {SEGMENTS.map((s) => <option key={s} value={s} />)}
+                </datalist>
+                <label>Classificação do cliente
+                  <select value={form.classification} onChange={f("classification")}>
+                    <option value="">—</option>
+                    {CLASSIFICATIONS.map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label>Observações<textarea rows={6} value={form.notes} onChange={f("notes")} /></label>
+            </>
+          )}
+
+          {tab === "enderecos" && (
+            <>
+              <div className="form-page-section">ENDEREÇO</div>
+              <div className="edit-grid">
+                <label>CEP<input value={form.cep} onChange={f("cep")} /></label>
+                <label>UF<input maxLength={2} placeholder="GO" value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value.toUpperCase() })} /></label>
+                <label>Cidade<input value={form.city} onChange={f("city")} /></label>
+                <label>Bairro<input value={form.neighborhood} onChange={f("neighborhood")} /></label>
+                <label>Rua<input value={form.street} onChange={f("street")} /></label>
+                <label>Nº<input value={form.addressNumber} onChange={f("addressNumber")} /></label>
+              </div>
+              <label>Complemento<input value={form.complement} onChange={f("complement")} /></label>
+              <label>Localização (link do Google Maps, coordenadas ou referência de acesso)<input placeholder="Cole aqui o link do mapa" value={form.location} onChange={f("location")} /></label>
+            </>
+          )}
+
+          {tab === "contato" && (
+            <>
+              <div className="form-page-section">CONTATO</div>
+              <div className="edit-grid">
+                <label>Telefone da empresa<input value={form.phone} onChange={f("phone")} /></label>
+                <EntityPicker
+                  label="Pessoa de contato principal"
+                  options={people}
+                  value={form.contactPersonId}
+                  onChange={(id) => setForm({ ...form, contactPersonId: id })}
+                  onCreate={(name) => onCreatePerson(name, null)}
+                  placeholder="Selecionar…"
+                />
+              </div>
+
+              <div className="form-page-section">PESSOAS DESTA EMPRESA</div>
+              {linkedPeople.length === 0 && contactDrafts.length === 0 && <div className="side-empty">Nenhuma pessoa vinculada ainda.</div>}
+              {linkedPeople.map((p) => (
+                <div key={p.id} className="contact-row">
+                  <b>{p.name}</b><span>{p.role}</span><span>{p.phone}</span><span>{p.email}</span>
+                </div>
+              ))}
+              {contactDrafts.map((c, i) => (
+                <div key={i} className="contact-row draft">
+                  <b>{c.name}</b><span>{c.role}</span><span>{c.phone}</span><span>{c.email}</span>
+                  <X size={14} onClick={() => setContactDrafts((d) => d.filter((_, j) => j !== i))} />
+                </div>
+              ))}
+
+              <div className="contact-add">
+                <input placeholder="Nome" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} />
+                <input placeholder="Cargo / função" value={contactForm.role} onChange={(e) => setContactForm({ ...contactForm, role: e.target.value })} />
+                <input placeholder="Telefone / WhatsApp" value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} />
+                <input placeholder="E-mail" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} />
+                <button type="button" className="btn btn-primary btn-sm" onClick={addContactDraft}><Plus size={13} /> Adicionar</button>
+              </div>
+              <div className="next-step-hint">As pessoas adicionadas aqui são salvas na tela Pessoas, vinculadas a esta empresa, quando você clicar em Salvar.</div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -3138,6 +3274,7 @@ function CompanyFormModal({ editing, people, onClose, onSubmit, onCreatePerson }
    ============================================================ */
 
 function RecurringFormModal({ editing, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
+  const [tab, setTab] = useState("geral");
   const [form, setForm] = useState({
     title: editing?.title || "", description: editing?.description || "",
     category: editing?.category || categories[0] || "", priority: editing?.priority || "Média",
@@ -3155,16 +3292,44 @@ function RecurringFormModal({ editing, companies, people, categories, onClose, o
       rule, occurrenceDate: form.occurrenceDate,
     });
   }
+  function save(e) {
+    if (!form.title.trim()) { setTab("geral"); return; }
+    submit(e);
+  }
   return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>{editing ? "Editar recorrência" : "Nova tarefa recorrente"}</h3>
-          <X size={16} onClick={onClose} />
-        </div>
-        <div className="modal-body">
-          <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") submit(e); }} /></label>
-          <label>Descrição<textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+    <FormPageShell
+      title={editing ? "Editar recorrência" : "Nova tarefa recorrente"}
+      tabs={[["geral", "GERAL"], ["repeticao", "REPETIÇÃO"]]}
+      tab={tab} setTab={setTab} onClose={onClose} onSave={save}
+    >
+      {tab === "geral" && (
+        <>
+          <div className="form-page-section">INFORMAÇÕES</div>
+          <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
+          <label>Descrição<textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+          <div className="edit-grid">
+            <label>Prioridade
+              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+                {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+              </select>
+            </label>
+            <label>Categoria
+              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">—</option>
+                {categories.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="form-page-section">VÍNCULOS</div>
+          <div className="edit-grid">
+            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
+            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
+          </div>
+        </>
+      )}
+      {tab === "repeticao" && (
+        <>
+          <div className="form-page-section">REPETIÇÃO</div>
           <div className="edit-grid">
             <label>Repetir
               <select value={form.ruleType} onChange={(e) => setForm({ ...form, ruleType: e.target.value })}>
@@ -3179,32 +3344,13 @@ function RecurringFormModal({ editing, companies, people, categories, onClose, o
             )}
             <label>{editing ? "Próxima ocorrência" : "Primeira ocorrência"}<input type="date" value={form.occurrenceDate} onChange={(e) => setForm({ ...form, occurrenceDate: e.target.value })} /></label>
             <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
-            <label>Prioridade
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
-                {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-              </select>
-            </label>
-            <label>Categoria
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                <option value="">—</option>
-                {categories.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
-            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
           </div>
           {editing && (
             <div className="next-step-hint">Editar aqui muda o modelo da recorrência e a próxima geração — tarefas já geradas anteriormente não são alteradas.</div>
           )}
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="button" className="btn btn-primary" onClick={submit}>{editing ? "Salvar alterações" : "Criar recorrência"}</button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </FormPageShell>
   );
 }
 
@@ -3536,6 +3682,29 @@ function Style() {
       .entity-avatar { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 14px; flex-shrink: 0; }
       .entity-edit-btn { opacity: 0; flex-shrink: 0; margin-left: auto; }
       .entity-card:hover .entity-edit-btn { opacity: 1; }
+
+      /* Formulário de empresa em página cheia */
+      .form-page { position: fixed; inset: 0; z-index: 55; background: var(--bg); display: flex; flex-direction: column; }
+      .form-page-bar { display: flex; align-items: center; gap: 12px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 18px; flex-shrink: 0; }
+      .form-page-back { background: transparent; border: none; color: var(--ink-soft); cursor: pointer; display: flex; align-items: center; padding: 6px; border-radius: 8px; }
+      .form-page-back:hover { background: var(--hover); color: var(--ink); }
+      .form-page-tabs { flex: 1; display: flex; justify-content: center; }
+      .form-page-tab { flex: 0 1 280px; background: transparent; border: none; border-bottom: 3px solid transparent; padding: 16px 10px; font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--ink-soft); cursor: pointer; font-family: var(--sans); }
+      .form-page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+      .form-page-body { flex: 1; overflow-y: auto; padding: 24px; }
+      .form-page-card { max-width: 1100px; margin: 0 auto; background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 24px 28px 30px; }
+      .form-page-section { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--ink-soft); margin: 4px 0 14px; }
+      .form-page-card .edit-grid { grid-template-columns: 1fr 1fr 1fr; gap: 0 16px; }
+      .contact-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.4fr auto; gap: 10px; align-items: center; padding: 9px 12px; background: var(--bg); border-radius: 8px; margin-bottom: 6px; font-size: 12.5px; }
+      .contact-row span { color: var(--ink-soft); }
+      .contact-row svg { cursor: pointer; color: var(--ink-soft); }
+      .contact-add { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.4fr auto; gap: 10px; margin-top: 10px; align-items: center; }
+      .contact-add input { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; }
+      @media (max-width: 860px) {
+        .form-page-card .edit-grid { grid-template-columns: 1fr; }
+        .contact-row, .contact-add { grid-template-columns: 1fr; }
+        .form-page-body { padding: 12px; }
+      }
 
       /* Prospecção (kanban) */
       .prospeccao-view { max-width: 100%; }
