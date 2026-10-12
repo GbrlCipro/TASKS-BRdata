@@ -4,7 +4,7 @@ import {
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
   Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone,
-  Sun, Moon, MapPin, Tag, Target, MessageCircle, ChevronDown
+  Sun, Moon, MapPin, Tag, Target, MessageCircle, ChevronDown, Eye, Download, Upload
 } from "lucide-react";
 
 /* ============================================================
@@ -34,7 +34,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // Campos de CRM para Empresas/Pessoas (leads e cadastros)
-const ENTITY_TYPES = ["Cliente", "Prospect", "Parceiro", "Colaborador", "Fornecedor"];
+const ENTITY_TYPES = ["Cliente", "Ex-cliente", "Prospect", "Parceiro", "Colaborador", "Fornecedor"];
 const CRM_STAGES = ["Novo Lead", "Primeiro Contato", "Qualificação", "Interesse", "Demonstração", "Proposta Enviada", "Negociação", "Fechado-Ganho", "Fechado-Perdido"];
 const CRM_STAGE_COLOR = {
   "Novo Lead": "#8B93A7",
@@ -432,6 +432,7 @@ export default function App() {
   const [inboxDraft, setInboxDraft] = useState("");
   const [companyFilter, setCompanyFilter] = useState(null);
   const [personFilter, setPersonFilter] = useState(null);
+  const [tasksStatusPreset, setTasksStatusPreset] = useState(null); // status inicial ao abrir Tarefas a partir de um perfil
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [profileTarget, setProfileTarget] = useState(null); // { type: "company"|"person", id }
   const [navStack, setNavStack] = useState([]); // pilha de { view, profileTarget } para o botão "Voltar"
@@ -942,6 +943,16 @@ export default function App() {
     window.db.updateCompany(id, fieldPatch).catch(console.error);
   }
 
+  async function applyCompaniesImport(plan) {
+    if (plan.companyCreates.length) {
+      update((d) => { d.companies = [...d.companies, ...plan.companyCreates.map((x) => x.company)]; });
+      await Promise.all(plan.companyCreates.map((x) => window.db.insertCompany(x.company).catch(console.error)));
+    }
+    plan.companyUpdates.forEach(({ id, patch }) => patchCompanyField(id, patch));
+    plan.contactUpdates.forEach(({ id, person }) => patchPerson(id, person));
+    plan.contactCreates.forEach(({ data }) => addPersonFull(data));
+  }
+
   function upsertCompanyFull(form) {
     const trimmed = (form.name || "").trim();
     if (!trimmed) return null;
@@ -1072,7 +1083,7 @@ export default function App() {
             <button
               key={n.id}
               className={`nav-item ${view === n.id ? "active" : ""}`}
-              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); setMobileNavOpen(false); setNavStack([]); }}
+              onClick={() => { setView(n.id); setCompanyFilter(null); setPersonFilter(null); setTasksStatusPreset(null); setMobileNavOpen(false); setNavStack([]); }}
             >
               <n.icon size={16} />
               <span>{n.label}</span>
@@ -1118,6 +1129,8 @@ export default function App() {
             companies={data.companies}
             people={data.people}
             onOpenTask={(t) => { openTaskDetail(t); setSearchOpen(false); }}
+            onOpenCompany={(c) => { navigateTo("profile", { type: "company", id: c.id }); setSearchOpen(false); setSearchQuery(""); }}
+            onOpenPerson={(p) => { navigateTo("profile", { type: "person", id: p.id }); setSearchOpen(false); setSearchQuery(""); }}
             onClose={() => setSearchOpen(false)}
           />
         )}
@@ -1151,7 +1164,7 @@ export default function App() {
               tasks={data.tasks.filter((t) => !t.inInbox)}
               categories={data.categories}
               companies={data.companies} people={data.people}
-              companyFilter={companyFilter} personFilter={personFilter}
+              companyFilter={companyFilter} personFilter={personFilter} statusPreset={tasksStatusPreset}
               onOpen={openTaskDetail} onQuickComplete={requestComplete}
               onNewTask={() => { setTaskFormPrefill(null); setTaskFormOpen(true); }}
               onBulkComplete={(ids) => setBulkCompleteTarget(ids)}
@@ -1164,6 +1177,7 @@ export default function App() {
           {view === "activities" && (
             <ActivitiesView
               activities={data.activities} companies={data.companies} people={data.people}
+              companyFilter={companyFilter} personFilter={personFilter}
               tasks={data.tasks}
               onNew={() => { setActivityFormPrefill(null); setActivityFormOpen(true); }}
               onEdit={(activity) => setEditingActivity(activity)}
@@ -1185,6 +1199,16 @@ export default function App() {
               onNew={() => setCompanyModal("new")}
               onEdit={(c) => setCompanyModal(c)}
               onSelect={(c) => navigateTo("profile", { type: "company", id: c.id })}
+              onHistory={(c) => navigateTo("history", { type: "company", id: c.id })}
+              onImport={applyCompaniesImport}
+            />
+          )}
+
+          {view === "history" && profileTarget && (
+            <CompanyHistory
+              company={data.companies.find((c) => c.id === profileTarget.id)}
+              tasks={data.tasks} activities={data.activities} people={data.people}
+              onOpenTask={openTaskDetail}
             />
           )}
 
@@ -1224,10 +1248,15 @@ export default function App() {
               onOpenTask={openTaskDetail}
               onQuickComplete={requestComplete}
               onOpenRelated={(type, id) => navigateTo("profile", { type, id })}
-              onSeeAllTasks={() => {
-                if (profileTarget.type === "company") setCompanyFilter(profileTarget.id);
-                else setPersonFilter(profileTarget.id);
-                navigateTo("tasks");
+              onOpenSection={(kind) => {
+                if (profileTarget.type === "company") { setCompanyFilter(profileTarget.id); setPersonFilter(null); }
+                else { setPersonFilter(profileTarget.id); setCompanyFilter(null); }
+                if (kind === "activities") {
+                  navigateTo("activities");
+                } else {
+                  setTasksStatusPreset({ open: "abertas", overdue: "atrasadas", done: "concluidas", all: "todas" }[kind]);
+                  navigateTo("tasks");
+                }
               }}
               onNewTask={() => {
                 setTaskFormPrefill({
@@ -1431,10 +1460,11 @@ export default function App() {
           people={data.people}
           onCreatePerson={upsertPerson}
           onClose={() => setCompanyModal(null)}
-          onSubmit={(form, newContacts) => {
+          onSubmit={(form, newContacts, changedPeople) => {
             let id;
             if (companyModal === "new") id = upsertCompanyFull(form);
             else { patchCompany(companyModal.id, form); id = companyModal.id; }
+            (changedPeople || []).forEach((p) => patchPerson(p.id, p));
             (newContacts || []).forEach((c) => addPersonFull({ ...c, companyId: id }));
             setCompanyModal(null);
           }}
@@ -1638,8 +1668,11 @@ function InboxView({ items, draft, setDraft, onCapture, onProcess, onDelete }) {
    TASKS VIEW
    ============================================================ */
 
-function TasksView({ tasks, categories, companies, people, companyFilter, personFilter, onOpen, onQuickComplete, onNewTask, onBulkComplete, onBulkSetCategory, onBulkSetPriority, onBulkDelete }) {
-  const [status, setStatus] = usePersistedState("tasks-status", "abertas");
+function TasksView({ tasks, categories, companies, people, companyFilter, personFilter, statusPreset, onOpen, onQuickComplete, onNewTask, onBulkComplete, onBulkSetCategory, onBulkSetPriority, onBulkDelete }) {
+  const [savedStatus, setSavedStatus] = usePersistedState("tasks-status", "abertas");
+  const [presetStatus, setPresetStatus] = useState(statusPreset || null); // vindo do perfil: vale só nesta visita, não altera a preferência salva
+  const status = presetStatus || savedStatus;
+  const setStatus = (v) => { setPresetStatus(null); setSavedStatus(v); };
   const [priority, setPriority] = usePersistedState("tasks-priority", "Todas");
   const [category, setCategory] = usePersistedState("tasks-category", "Todas");
   const [q, setQ] = useState("");
@@ -1782,10 +1815,14 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
    ACTIVITIES VIEW
    ============================================================ */
 
-function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, onGenerateTask, onOpenTask }) {
+function ActivitiesView({ activities, companies, people, tasks, companyFilter, personFilter, onNew, onEdit, onGenerateTask, onOpenTask }) {
   const [sortBy, setSortBy] = usePersistedSort("activities", "date");
   const [interactionFilter, setInteractionFilter] = usePersistedState("activities-interaction-type", "Todos");
   let filtered = activities;
+  if (companyFilter) filtered = filtered.filter((a) => a.companyId === companyFilter);
+  if (personFilter) filtered = filtered.filter((a) => a.personId === personFilter);
+  const companyName = companyFilter ? companies.find((c) => c.id === companyFilter)?.name : null;
+  const personName = personFilter ? people.find((p) => p.id === personFilter)?.name : null;
   if (interactionFilter !== "Todos") filtered = filtered.filter((a) => a.interactionType === interactionFilter);
   const sorted = sortActivities(filtered, sortBy);
   return (
@@ -1793,7 +1830,11 @@ function ActivitiesView({ activities, companies, people, tasks, onNew, onEdit, o
       <div className="view-header">
         <div>
           <h1>Atividades</h1>
-          <p className="view-sub">Registro do que já aconteceu — a base do seu histórico.</p>
+          <p className="view-sub">
+            {companyName && <>Filtrando por empresa: <b>{companyName}</b> · </>}
+            {personName && <>Filtrando por pessoa: <b>{personName}</b> · </>}
+            {companyName || personName ? `${sorted.length} atividade(s)` : "Registro do que já aconteceu — a base do seu histórico."}
+          </p>
         </div>
         <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova atividade</button>
       </div>
@@ -1888,17 +1929,476 @@ function AgendaView({ tasks, companies, people, onOpen, onQuickComplete }) {
    COMPANIES / PEOPLE VIEWS
    ============================================================ */
 
-function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, onSelect }) {
+function lastInteraction(companyId, tasks, activities) {
+  const today = todayStr();
+  const mine = tasks.filter((t) => !t.inInbox && t.companyId === companyId);
+  const isOpen = (t) => t.status !== "Concluída" && t.status !== "Cancelada";
+
+  // 1) tarefa em aberto agendada (prazo de hoje em diante): a mais próxima, com a data do prazo
+  const upcoming = mine
+    .filter((t) => t.dueDate && t.dueDate >= today && isOpen(t))
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  if (upcoming) {
+    return { shownDate: upcoming.dueDate, kind: "Próxima tarefa", text: upcoming.title, desc: upcoming.description };
+  }
+
+  // 2) senão: o mais recente entre atividades e tarefas, pela data informada (o prazo, nas tarefas)
+  let best = null;
+  const consider = (shownDate, created, kind, text, desc) => {
+    const key = `${shownDate} ${created}`;
+    if (!best || key > best.key) best = { key, shownDate, kind, text, desc };
+  };
+  activities.forEach((a) => {
+    if (a.companyId === companyId) consider((a.createdAt || "").split(" ")[0], a.createdAt || "", "Atividade", a.title, a.description);
+  });
+  mine.forEach((t) => consider(t.dueDate || (t.createdAt || "").split(" ")[0], t.createdAt || "", "Tarefa", t.title, t.description));
+  return best;
+}
+
+/* ============================================================
+   EXPORTAÇÃO PARA EXCEL (empresas + contatos)
+   ============================================================ */
+
+const COMPANY_SHEET_COLUMNS = [
+  { key: "id", header: "ID", width: 24 },
+  { key: "name", header: "Nome / Nome Fantasia", width: 32 },
+  { key: "razaoSocial", header: "Razão Social", width: 32 },
+  { key: "cnpj", header: "CNPJ", width: 20 },
+  { key: "entityType", header: "Tipo", width: 14 },
+  { key: "crmStage", header: "Etapa do CRM", width: 20 },
+  { key: "origin", header: "Origem", width: 24 },
+  { key: "segment", header: "Segmento", width: 22 },
+  { key: "classification", header: "Classificação", width: 14 },
+  { key: "cep", header: "CEP", width: 12 },
+  { key: "uf", header: "UF", width: 6 },
+  { key: "city", header: "Cidade", width: 22 },
+  { key: "neighborhood", header: "Bairro", width: 20 },
+  { key: "street", header: "Rua", width: 28 },
+  { key: "addressNumber", header: "Nº", width: 8 },
+  { key: "complement", header: "Complemento", width: 20 },
+  { key: "location", header: "Localização", width: 28 },
+  { key: "phone", header: "Telefone (cadastro antigo)", width: 24 },
+  { key: "notes", header: "Observações", width: 36 },
+  { key: "commercialSummary", header: "Resumo Comercial", width: 36 },
+  { key: "lostReason", header: "Motivo da perda", width: 28 },
+];
+const COMPANY_SHEET_READONLY_HEADER = "Última tarefa/atividade (só consulta)";
+
+const CONTACT_SHEET_COLUMNS = [
+  { key: "id", header: "ID", width: 24 },
+  { key: "company", header: "Empresa", width: 32 },
+  { key: "name", header: "Nome / Descrição", width: 30 },
+  { key: "role", header: "Cargo", width: 22 },
+  { key: "phone", header: "Telefone", width: 20 },
+  { key: "email", header: "E-mail", width: 30 },
+];
+
+async function exportCompaniesToExcel(companies, people, tasks, activities) {
+  const XLSX = await import("xlsx");
+  const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR");
+  const text = (v) => (v == null ? "" : String(v));
+
+  // aba Empresas
+  const companyRows = [...companies].sort(byName).map((c) => {
+    const hasStructured = c.street || c.addressNumber || c.neighborhood || c.complement;
+    const last = lastInteraction(c.id, tasks, activities);
+    const values = COMPANY_SHEET_COLUMNS.map((col) => {
+      if (col.key === "street") return text(hasStructured ? c.street : c.address);
+      return text(c[col.key]);
+    });
+    values.push(last ? `${formatDateBR(last.shownDate)} (${last.kind}): ${last.text}` : "");
+    return values;
+  });
+  const wsCompanies = XLSX.utils.aoa_to_sheet([
+    [...COMPANY_SHEET_COLUMNS.map((col) => col.header), COMPANY_SHEET_READONLY_HEADER],
+    ...companyRows,
+  ]);
+  wsCompanies["!cols"] = [...COMPANY_SHEET_COLUMNS.map((col) => ({ wch: col.width })), { wch: 50 }];
+
+  // aba Contatos (pessoas vinculadas a alguma empresa)
+  const companyName = (id) => companies.find((c) => c.id === id)?.name || "";
+  const contactRows = people
+    .filter((p) => p.companyId && companyName(p.companyId))
+    .sort((a, b) => companyName(a.companyId).localeCompare(companyName(b.companyId), "pt-BR") || byName(a, b))
+    .map((p) => CONTACT_SHEET_COLUMNS.map((col) => (col.key === "company" ? companyName(p.companyId) : text(p[col.key]))));
+  const wsContacts = XLSX.utils.aoa_to_sheet([CONTACT_SHEET_COLUMNS.map((col) => col.header), ...contactRows]);
+  wsContacts["!cols"] = CONTACT_SHEET_COLUMNS.map((col) => ({ wch: col.width }));
+
+  // aba Listas (valores aceitos nos campos de escolha)
+  const lists = [
+    ["Tipo", ENTITY_TYPES], ["Etapa do CRM", CRM_STAGES], ["Origem", ORIGINS],
+    ["Segmento", SEGMENTS], ["Classificação", CLASSIFICATIONS],
+  ];
+  const maxLen = Math.max(...lists.map(([, vals]) => vals.length));
+  const listRows = Array.from({ length: maxLen }, (_, i) => lists.map(([, vals]) => vals[i] || ""));
+  const wsLists = XLSX.utils.aoa_to_sheet([lists.map(([title]) => title), ...listRows]);
+  wsLists["!cols"] = lists.map(() => ({ wch: 26 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsCompanies, "Empresas");
+  XLSX.utils.book_append_sheet(wb, wsContacts, "Contatos");
+  XLSX.utils.book_append_sheet(wb, wsLists, "Listas");
+  XLSX.writeFileXLSX(wb, `empresas-${todayStr()}.xlsx`);
+}
+
+/* ============================================================
+   IMPORTAÇÃO DE EXCEL (leitura, conferência e aplicação)
+   ============================================================ */
+
+const SCI_RE = /^\d+([.,]\d+)?e[+-]?\d+$/i; // número em notação científica (o Excel estraga CNPJ/CEP/telefone assim)
+const ADDRESS_KEYS = ["street", "addressNumber", "neighborhood", "complement"];
+
+function composeAddress(c) {
+  return ADDRESS_KEYS.map((k) => (c[k] || "").trim()).filter(Boolean).join(", ");
+}
+function matchChoice(value, list) {
+  const n = normText(value);
+  return list.find((x) => normText(x) === n) || null;
+}
+function blankCompany(id, name) {
+  return {
+    id, name, segment: "", city: "", address: "", location: "", phone: "", contactPersonId: null,
+    razaoSocial: "", cnpj: "", cep: "", uf: "", street: "", addressNumber: "", neighborhood: "", complement: "",
+    entityType: "", crmStage: "", origin: "", classification: "", notes: "", commercialSummary: "", lostReason: "",
+  };
+}
+
+function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
+  const wb = XLSX.read(buffer, { type: "array" });
+  const plan = {
+    companyCreates: [], companyUpdates: [], companyUnchanged: 0,
+    contactCreates: [], contactUpdates: [], contactUnchanged: 0,
+    problems: [],
+  };
+  const problem = (sheet, row, message) => plan.problems.push({ sheet, row, message });
+  const cell = (v) => (v == null ? "" : String(v).trim());
+  const readSheet = (name) => {
+    const real = wb.SheetNames.find((n) => normText(n) === normText(name));
+    if (!real) return null;
+    return XLSX.utils.sheet_to_json(wb.Sheets[real], { header: 1, defval: "", raw: false });
+  };
+  const columnIndex = (rows, columns) => {
+    const header = rows[0].map((h) => normText(cell(h)));
+    const idx = {};
+    columns.forEach((col) => { const i = header.indexOf(normText(col.header)); if (i >= 0) idx[col.key] = i; });
+    return idx;
+  };
+
+  const companyRows = readSheet("Empresas");
+  const contactRows = readSheet("Contatos");
+  if (!companyRows && !contactRows) {
+    problem("Arquivo", 0, 'Não encontrei as abas "Empresas" nem "Contatos". Use o arquivo exportado pelo sistema.');
+    return plan;
+  }
+
+  const nameToId = new Map(); // nome normalizado -> id (empresas existentes e novas)
+  companies.forEach((c) => nameToId.set(normText(c.name), c.id));
+  const newByName = new Map(); // nome normalizado -> operação de criação
+
+  // ---------- Empresas ----------
+  if (companyRows && companyRows.length) {
+    const idx = columnIndex(companyRows, COMPANY_SHEET_COLUMNS);
+    if (idx.name === undefined) {
+      problem("Empresas", 1, 'Coluna "Nome / Nome Fantasia" não encontrada.');
+    } else {
+      companyRows.slice(1).forEach((r, i) => {
+        const rowNum = i + 2;
+        const get = (key) => (idx[key] === undefined ? "" : cell(r[idx[key]]));
+        if (!COMPANY_SHEET_COLUMNS.some((col) => get(col.key))) return; // linha vazia
+
+        const id = get("id");
+        const cnpjDigits = get("cnpj").replace(/\D/g, "");
+        const name = get("name") || (id ? "" : get("razaoSocial")); // sem nome fantasia, usa a razão social
+        let existing = null;
+        if (id) {
+          existing = companies.find((c) => c.id === id);
+          if (!existing) return problem("Empresas", rowNum, `ID "${id}" não existe no sistema (não apague nem altere a coluna ID).`);
+        } else {
+          if (!name) return problem("Empresas", rowNum, "Linha sem ID e sem nome (nem razão social).");
+          // sem ID: acha a empresa pelo CNPJ (com ou sem pontuação) e, na falta dele, pelo nome
+          existing = (cnpjDigits && companies.find((c) => (c.cnpj || "").replace(/\D/g, "") === cnpjDigits))
+            || companies.find((c) => normText(c.name) === normText(name)) || null;
+        }
+
+        const patch = {};
+        const errors = [];
+        COMPANY_SHEET_COLUMNS.forEach((col) => {
+          if (col.key === "id") return;
+          let v = get(col.key);
+          if (!v) return; // célula vazia nunca apaga o que já existe
+          if (["cnpj", "cep", "phone"].includes(col.key) && SCI_RE.test(v)) {
+            errors.push(`${col.header}: o Excel converteu para número. Formate a coluna como Texto e digite de novo.`);
+            return;
+          }
+          const lists = { entityType: ENTITY_TYPES, crmStage: CRM_STAGES, origin: ORIGINS, classification: CLASSIFICATIONS };
+          if (lists[col.key]) {
+            const m = matchChoice(v, lists[col.key]);
+            if (!m) { errors.push(`${col.header} "${v}" não é um valor válido (veja a aba Listas).`); return; }
+            v = m;
+          }
+          if (col.key === "segment") v = matchChoice(v, SEGMENTS) || v;
+          if (col.key === "uf") {
+            v = v.toUpperCase();
+            if (!/^[A-Z]{2}$/.test(v)) { errors.push(`UF "${v}" inválida (use a sigla, ex: GO).`); return; }
+          }
+          patch[col.key] = v;
+        });
+        if (errors.length) return errors.forEach((m) => problem("Empresas", rowNum, m));
+
+        if (existing) {
+          const diff = {};
+          const onlyDigits = (v) => (v || "").replace(/\D/g, "");
+          Object.keys(patch).forEach((k) => {
+            if (k === "name" && !id) return; // achada pelo nome: não troca maiúscula/minúscula
+            const same = k === "cnpj" ? onlyDigits(existing.cnpj) === onlyDigits(patch.cnpj) : (existing[k] || "") === patch[k];
+            if (!same) diff[k] = patch[k];
+          });
+          if (Object.keys(diff).some((k) => ADDRESS_KEYS.includes(k))) diff.address = composeAddress({ ...existing, ...diff });
+          if (Object.keys(diff).length === 0) { plan.companyUnchanged += 1; return; }
+          const prev = plan.companyUpdates.find((u) => u.id === existing.id);
+          if (prev) Object.assign(prev.patch, diff);
+          else plan.companyUpdates.push({ id: existing.id, name: existing.name, patch: diff, row: rowNum });
+        } else {
+          const norm = normText(name);
+          const keys = [cnpjDigits ? `cnpj:${cnpjDigits}` : null, `name:${norm}`].filter(Boolean);
+          const op = keys.map((k) => newByName.get(k)).find(Boolean);
+          if (op) {
+            Object.assign(op.company, patch);
+            op.company.address = composeAddress(op.company);
+          } else {
+            const company = { ...blankCompany(uid("co"), name), ...patch, name };
+            company.address = composeAddress(company);
+            const created = { company, row: rowNum };
+            plan.companyCreates.push(created);
+            keys.forEach((k) => newByName.set(k, created));
+            nameToId.set(norm, company.id);
+          }
+        }
+      });
+    }
+  }
+
+  // ---------- Contatos ----------
+  if (contactRows && contactRows.length) {
+    const idx = columnIndex(contactRows, CONTACT_SHEET_COLUMNS);
+    if (idx.name === undefined) {
+      problem("Contatos", 1, 'Coluna "Nome / Descrição" não encontrada.');
+    } else {
+      const newContacts = new Map(); // empresaId|nome -> operação de criação
+      contactRows.slice(1).forEach((r, i) => {
+        const rowNum = i + 2;
+        const get = (key) => (idx[key] === undefined ? "" : cell(r[idx[key]]));
+        if (!CONTACT_SHEET_COLUMNS.some((col) => get(col.key))) return;
+
+        const id = get("id");
+        const companyName = get("company");
+        const name = get("name");
+        const fields = { name, role: get("role"), phone: get("phone"), email: get("email") };
+        if (fields.phone && SCI_RE.test(fields.phone)) {
+          return problem("Contatos", rowNum, "Telefone: o Excel converteu para número. Formate a coluna como Texto e digite de novo.");
+        }
+
+        let companyId = companyName ? nameToId.get(normText(companyName)) : null;
+        if (companyName && !companyId) return problem("Contatos", rowNum, `Empresa "${companyName}" não encontrada (confira o nome na aba Empresas).`);
+
+        let person = null;
+        if (id) {
+          person = people.find((p) => p.id === id);
+          if (!person) return problem("Contatos", rowNum, `ID "${id}" não existe no sistema (não apague nem altere a coluna ID).`);
+          if (!companyId) companyId = person.companyId;
+        } else {
+          if (!companyId) return problem("Contatos", rowNum, "Contato sem ID precisa informar a Empresa.");
+          if (!name) return problem("Contatos", rowNum, "Contato sem ID precisa de Nome / Descrição.");
+          person = people.find((p) => p.companyId === companyId && normText(p.name) === normText(name)) || null;
+        }
+
+        if (person) {
+          const diff = {};
+          ["name", "role", "phone", "email"].forEach((k) => {
+            if (k === "name" && !id) return; // achado pelo nome: não troca maiúscula/minúscula
+            if (fields[k] && fields[k] !== (person[k] || "")) diff[k] = fields[k];
+          });
+          if (companyId !== person.companyId) diff.companyId = companyId;
+          if (Object.keys(diff).length === 0) { plan.contactUnchanged += 1; return; }
+          const prev = plan.contactUpdates.find((u) => u.id === person.id);
+          if (prev) Object.assign(prev.person, diff);
+          else plan.contactUpdates.push({ id: person.id, person: { ...person, ...diff }, row: rowNum });
+        } else {
+          const key = `${companyId}|${normText(name)}`;
+          const op = newContacts.get(key);
+          if (op) {
+            ["role", "phone", "email"].forEach((k) => { if (fields[k]) op.data[k] = fields[k]; });
+          } else {
+            const created = { data: { name, role: fields.role, phone: fields.phone, email: fields.email, notes: "", companyId }, row: rowNum };
+            plan.contactCreates.push(created);
+            newContacts.set(key, created);
+          }
+        }
+      });
+    }
+  }
+
+  return plan;
+}
+
+function ImportPreviewModal({ plan, onCancel, onConfirm }) {
+  const [state, setState] = useState("preview"); // preview | applying | done | error
+  const total = plan.companyCreates.length + plan.companyUpdates.length + plan.contactCreates.length + plan.contactUpdates.length;
+  const shown = plan.problems.slice(0, 100);
+
+  async function confirm() {
+    setState("applying");
+    try {
+      await onConfirm(plan);
+      setState("done");
+    } catch (e) {
+      console.error(e);
+      setState("error");
+    }
+  }
+
+  const Line = ({ label, n }) => <div className="import-line"><span>{label}</span><b>{n}</b></div>;
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal modal-wide">
+        <div className="modal-head">
+          <h3>{state === "done" ? "Importação concluída" : "Conferir importação"}</h3>
+          {state !== "applying" && <X size={16} onClick={onCancel} />}
+        </div>
+        <div className="modal-body">
+          {state === "done" && <div className="import-ok">Pronto! {total} alteração(ões) gravada(s).</div>}
+          {state === "error" && <div className="field-error">Algo deu errado ao gravar. Confira a conexão e tente de novo (veja o console do navegador).</div>}
+
+          <div className="import-block">
+            <div className="import-title">Empresas</div>
+            <Line label="Novas" n={plan.companyCreates.length} />
+            <Line label="Atualizadas" n={plan.companyUpdates.length} />
+            <Line label="Sem mudança" n={plan.companyUnchanged} />
+          </div>
+          <div className="import-block">
+            <div className="import-title">Contatos</div>
+            <Line label="Novos" n={plan.contactCreates.length} />
+            <Line label="Atualizados" n={plan.contactUpdates.length} />
+            <Line label="Sem mudança" n={plan.contactUnchanged} />
+          </div>
+
+          {plan.problems.length > 0 && (
+            <div className="import-block">
+              <div className="import-title import-title-bad">{plan.problems.length} problema(s) — essas linhas NÃO serão importadas</div>
+              <div className="import-problems">
+                {shown.map((pr, i) => (
+                  <div key={i} className="import-problem">{pr.row ? `${pr.sheet}, linha ${pr.row}: ` : `${pr.sheet}: `}{pr.message}</div>
+                ))}
+                {plan.problems.length > shown.length && <div className="import-problem">… e mais {plan.problems.length - shown.length}.</div>}
+              </div>
+              <div className="next-step-hint">Corrija na planilha e importe de novo. As linhas sem problema podem ser importadas agora, e reimportar depois não duplica nada.</div>
+            </div>
+          )}
+
+          <div className="modal-footer">
+            {state === "done" ? (
+              <button type="button" className="btn btn-primary" onClick={onCancel}>Fechar</button>
+            ) : (
+              <>
+                <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={state === "applying"}>Cancelar</button>
+                <button type="button" className="btn btn-primary" onClick={confirm} disabled={total === 0 || state === "applying"}>
+                  {state === "applying" ? "Gravando…" : `Importar ${total} alteração(ões)`}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options, allValue, format }) {
+  const caption = label.replace(/^Filtrar por /, "");
+  return (
+    <label className="filter-field">
+      <span className="filter-field-label">{caption.charAt(0).toUpperCase() + caption.slice(1)}</span>
+      <select className={`filter-btn ${value !== allValue ? "active" : ""}`} value={value} onChange={(e) => onChange(e.target.value)} title={label}>
+        <option value={allValue}>Todos</option>
+        {options.map((o) => <option key={o} value={o}>{format ? format(o) : o}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function normText(v) {
+  return (v || "").toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, onSelect, onHistory, onImport }) {
   const [sortBy, setSortBy] = usePersistedSort("companies", "recent");
   const [entityTypeFilter, setEntityTypeFilter] = usePersistedState("companies-entity-type", "Todos");
   const [crmStageFilter, setCrmStageFilter] = usePersistedState("companies-crm-stage", "Todas");
   const [classificationFilter, setClassificationFilter] = usePersistedState("companies-classification", "Todas");
+  const [originFilter, setOriginFilter] = usePersistedState("companies-origin", "Todas");
+  const [segmentFilter, setSegmentFilter] = usePersistedState("companies-segment", "Todos");
+  const [ufFilter, setUfFilter] = usePersistedState("companies-uf", "Todos");
+  const [cityFilter, setCityFilter] = usePersistedState("companies-city", "Todas");
+  const [viewMode, setViewMode] = usePersistedState("companies-view-mode", "list");
+  const [qName, setQName] = useState("");
+  const [qCity, setQCity] = useState("");
+
+  const fileRef = useRef(null);
+  const [importPlan, setImportPlan] = useState(null);
+
+  async function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      setImportPlan(parseCompaniesWorkbook(XLSX, buffer, companies, people));
+    } catch (err) {
+      console.error(err);
+      alert("Não consegui ler esse arquivo. Use a planilha .xlsx exportada pelo sistema.");
+    }
+  }
+
+  async function handleExport() {
+    try {
+      await exportCompaniesToExcel(companies, people, tasks, activities);
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível gerar o Excel. Confirme que a biblioteca foi instalada (npm install) e reinicie o npm run dev.");
+    }
+  }
+
+  const uniqueSorted = (vals, current, allValue) =>
+    Array.from(new Set([...vals.filter(Boolean), ...(current !== allValue ? [current] : [])])).sort((x, y) => x.localeCompare(y, "pt-BR"));
+  const segmentOptions = uniqueSorted([...SEGMENTS, ...companies.map((c) => c.segment)], segmentFilter, "Todos");
+  const ufOptions = uniqueSorted(companies.map((c) => c.uf), ufFilter, "Todos");
+  const cityOptions = uniqueSorted(companies.map((c) => c.city), cityFilter, "Todas");
 
   let filtered = companies;
   if (entityTypeFilter !== "Todos") filtered = filtered.filter((c) => c.entityType === entityTypeFilter);
   if (crmStageFilter !== "Todas") filtered = filtered.filter((c) => c.crmStage === crmStageFilter);
   if (classificationFilter !== "Todas") filtered = filtered.filter((c) => c.classification === classificationFilter);
+  if (originFilter !== "Todas") filtered = filtered.filter((c) => c.origin === originFilter);
+  if (segmentFilter !== "Todos") filtered = filtered.filter((c) => c.segment === segmentFilter);
+  if (ufFilter !== "Todos") filtered = filtered.filter((c) => c.uf === ufFilter);
+  if (cityFilter !== "Todas") filtered = filtered.filter((c) => c.city === cityFilter);
+  if (qName.trim()) {
+    const q = normText(qName);
+    filtered = filtered.filter((c) => normText(c.name).includes(q) || normText(c.razaoSocial).includes(q) || normText(c.cnpj).includes(q));
+  }
+  if (qCity.trim()) {
+    const q = normText(qCity);
+    filtered = filtered.filter((c) => normText(c.city).includes(q));
+  }
   const sorted = sortEntities(filtered, sortBy);
+
+  function clearFilters() {
+    setEntityTypeFilter("Todos"); setCrmStageFilter("Todas"); setClassificationFilter("Todas");
+    setOriginFilter("Todas"); setSegmentFilter("Todos"); setUfFilter("Todos"); setCityFilter("Todas");
+    setQName(""); setQCity("");
+  }
 
   return (
     <div className="view">
@@ -1907,81 +2407,127 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
           <h1>Empresas</h1>
           <p className="view-sub">{sorted.length} de {companies.length} cadastradas</p>
         </div>
-        <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova empresa</button>
-      </div>
-      <div className="pill-filters">
-        <select className="pill-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
-          <option value="recent">Mais recentes</option>
-          <option value="name">Nome (A-Z)</option>
-        </select>
-
-        <div className="pill-row">
-          <button type="button" className={`pill ${entityTypeFilter === "Todos" ? "active" : ""}`} onClick={() => setEntityTypeFilter("Todos")}>Todos</button>
-          {ENTITY_TYPES.map((t) => (
-            <button key={t} type="button" className={`pill ${entityTypeFilter === t ? "active" : ""}`} onClick={() => setEntityTypeFilter(entityTypeFilter === t ? "Todos" : t)}>{t}</button>
-          ))}
+        <div className="header-actions">
+          <div className="pill-row">
+            <button type="button" className={`pill ${viewMode === "list" ? "active" : ""}`} onClick={() => setViewMode("list")}>Lista</button>
+            <button type="button" className={`pill ${viewMode === "cards" ? "active" : ""}`} onClick={() => setViewMode("cards")}>Cards</button>
+          </div>
+          <button className="btn btn-ghost" onClick={handleExport}><Download size={14} /> Exportar Excel</button>
+          <button className="btn btn-ghost" onClick={() => fileRef.current && fileRef.current.click()}><Upload size={14} /> Importar Excel</button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={handleImportFile} />
+          <button className="btn btn-primary" onClick={onNew}><Plus size={14} /> Nova empresa</button>
         </div>
+      </div>
 
-        <div className="pill-row">
-          <button type="button" className={`pill ${classificationFilter === "Todas" ? "active" : ""}`} onClick={() => setClassificationFilter("Todas")}>Todas</button>
-          {CLASSIFICATIONS.map((c) => {
-            const active = classificationFilter === c;
+      <div className="search-row">
+        <div className="search-field"><Search size={16} /><input placeholder="pesquisar por nome, razão social ou CNPJ…" value={qName} onChange={(e) => setQName(e.target.value)} /></div>
+        <div className="search-field"><Search size={16} /><input placeholder="pesquisar cidade…" value={qCity} onChange={(e) => setQCity(e.target.value)} /></div>
+      </div>
+
+      <div className="filter-grid">
+        <FilterSelect label="Filtrar por tipo" value={entityTypeFilter} onChange={setEntityTypeFilter} options={ENTITY_TYPES} allValue="Todos" />
+        <FilterSelect label="Filtrar por etapa do CRM" value={crmStageFilter} onChange={setCrmStageFilter} options={CRM_STAGES} allValue="Todas" />
+        <FilterSelect label="Filtrar por classificação" value={classificationFilter} onChange={setClassificationFilter} options={CLASSIFICATIONS} allValue="Todas" format={(c) => `Classe ${c}`} />
+        <FilterSelect label="Filtrar por origem do cliente" value={originFilter} onChange={setOriginFilter} options={ORIGINS} allValue="Todas" />
+        <FilterSelect label="Filtrar por segmento" value={segmentFilter} onChange={setSegmentFilter} options={segmentOptions} allValue="Todos" />
+        <FilterSelect label="Filtrar por estado" value={ufFilter} onChange={setUfFilter} options={ufOptions} allValue="Todos" />
+        <FilterSelect label="Filtrar por cidade" value={cityFilter} onChange={setCityFilter} options={cityOptions} allValue="Todas" />
+        <label className="filter-field">
+          <span className="filter-field-label">Ordenar</span>
+          <select className="filter-btn" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+            <option value="recent">Mais recentes</option>
+            <option value="name">Nome (A-Z)</option>
+          </select>
+        </label>
+        <button type="button" className="filter-btn" onClick={clearFilters}>Limpar filtros</button>
+      </div>
+
+      {viewMode === "list" ? (
+        <div className="company-list">
+          {companies.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa cadastrada" hint="Cadastre os clientes, fornecedores e parceiros que aparecem na sua rotina." />}
+          {companies.length > 0 && sorted.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa encontrada" hint="Ajuste os filtros ou a pesquisa." />}
+          {sorted.length > 0 && (
+            <div className="company-list-head">
+              <span>Nome</span><span>Cidade</span><span>Segmento</span><span className="left">Última tarefa/atividade</span><span />
+            </div>
+          )}
+          {sorted.map((c) => {
+            const last = lastInteraction(c.id, tasks, activities);
             return (
-              <button
-                key={c} type="button"
-                className={`pill pill-dot ${active ? "active" : ""}`}
-                style={active ? { background: CLASSIFICATION_COLOR[c], borderColor: CLASSIFICATION_COLOR[c], color: "#fff" } : { color: CLASSIFICATION_COLOR[c], borderColor: CLASSIFICATION_COLOR[c] + "55" }}
-                onClick={() => setClassificationFilter(active ? "Todas" : c)}
-              >{c}</button>
+              <div key={c.id} className="company-row">
+                <div className="company-row-name">
+                  <div className="company-row-title">{c.name}</div>
+                  {c.razaoSocial && c.razaoSocial !== c.name && <div className="company-row-sub">Razão social: {c.razaoSocial}</div>}
+                  {(c.entityType || c.crmStage || c.classification) && (
+                    <div className="entity-crm-row center">
+                      {c.entityType && <Badge>{c.entityType}</Badge>}
+                      <CrmStageBadge stage={c.crmStage} />
+                      <ClassificationBadge classification={c.classification} />
+                    </div>
+                  )}
+                </div>
+                <div className="company-row-cell">{c.city ? `${c.city}${c.uf ? " - " + c.uf : ""}` : "—"}</div>
+                <div className="company-row-cell">{c.segment || "—"}</div>
+                <div className="company-row-last">
+                  {last ? (
+                    <>
+                      <div className="company-row-text"><b>{formatDateBR(last.shownDate)}</b> <span className="company-row-kind">({last.kind})</span>: {last.text}</div>
+                      {last.desc && <div className="company-row-desc">{last.desc}</div>}
+                    </>
+                  ) : <span className="company-row-cell">Sem registros</span>}
+                </div>
+                <div className="company-row-actions">
+                  <button className="row-action edit" onClick={(e) => { e.stopPropagation(); onSelect(c); }} title="Abrir empresa"><Edit2 size={15} /></button>
+                  <button className="row-action view" onClick={(e) => { e.stopPropagation(); onHistory(c); }} title="Ver histórico"><Eye size={15} /></button>
+                </div>
+              </div>
             );
           })}
         </div>
-
-        <select className="pill-select" value={crmStageFilter} onChange={(e) => setCrmStageFilter(e.target.value)} title="Filtrar por etapa do CRM">
-          <option value="Todas">Todas as etapas</option>
-          {CRM_STAGES.map((s) => <option key={s}>{s}</option>)}
-        </select>
-      </div>
-      <div className="grid-cards">
-        {companies.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa cadastrada" hint="Cadastre os clientes, fornecedores e parceiros que aparecem na sua rotina." />}
-        {companies.length > 0 && sorted.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa encontrada" hint="Ajuste os filtros acima." />}
-        {sorted.map((c) => {
-          const tCount = tasks.filter((t) => t.companyId === c.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
-          const aCount = activities.filter((a) => a.companyId === c.id).length;
-          const pCount = people.filter((p) => p.companyId === c.id).length;
-          const contact = c.contactPersonId ? people.find((p) => p.id === c.contactPersonId) : null;
-          const avatarColor = c.classification ? CLASSIFICATION_COLOR[c.classification] : "#8B93A7";
-          return (
-            <div key={c.id} className="entity-card" onClick={() => onSelect(c)}>
-              <div className="entity-card-head">
-                <div className="entity-avatar" style={{ background: avatarColor + "1F", color: avatarColor }}>
-                  {(c.name || "?").trim().charAt(0).toUpperCase()}
+      ) : (
+        <div className="grid-cards">
+          {companies.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa cadastrada" hint="Cadastre os clientes, fornecedores e parceiros que aparecem na sua rotina." />}
+          {companies.length > 0 && sorted.length === 0 && <EmptyState icon={Building2} title="Nenhuma empresa encontrada" hint="Ajuste os filtros acima." />}
+          {sorted.map((c) => {
+            const tCount = tasks.filter((t) => t.companyId === c.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
+            const aCount = activities.filter((a) => a.companyId === c.id).length;
+            const pCount = people.filter((p) => p.companyId === c.id).length;
+            const contact = c.contactPersonId ? people.find((p) => p.id === c.contactPersonId) : null;
+            const avatarColor = c.classification ? CLASSIFICATION_COLOR[c.classification] : "#8B93A7";
+            return (
+              <div key={c.id} className="entity-card" onClick={() => onSelect(c)}>
+                <div className="entity-card-head">
+                  <div className="entity-avatar" style={{ background: avatarColor + "1F", color: avatarColor }}>
+                    {(c.name || "?").trim().charAt(0).toUpperCase()}
+                  </div>
+                  <div className="entity-card-headtext">
+                    <div className="entity-name">{c.name}</div>
+                    {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
+                  </div>
+                  <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
                 </div>
-                <div className="entity-card-headtext">
-                  <div className="entity-name">{c.name}</div>
-                  {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
-                </div>
-                <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
+                {(c.entityType || c.crmStage || c.classification) && (
+                  <div className="entity-crm-row">
+                    {c.entityType && <Badge>{c.entityType}</Badge>}
+                    <CrmStageBadge stage={c.crmStage} />
+                    <ClassificationBadge classification={c.classification} />
+                  </div>
+                )}
+                <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
+                {(contact || c.address || c.phone) && (
+                  <div className="entity-contact">
+                    {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
+                    {c.phone && <span><Phone size={11} /> {c.phone}</span>}
+                    {c.address && <span><MapPin size={11} /> {c.address}</span>}
+                  </div>
+                )}
               </div>
-              {(c.entityType || c.crmStage || c.classification) && (
-                <div className="entity-crm-row">
-                  {c.entityType && <Badge>{c.entityType}</Badge>}
-                  <CrmStageBadge stage={c.crmStage} />
-                  <ClassificationBadge classification={c.classification} />
-                </div>
-              )}
-              <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
-              {(contact || c.address || c.phone) && (
-                <div className="entity-contact">
-                  {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
-                  {c.phone && <span><Phone size={11} /> {c.phone}</span>}
-                  {c.address && <span><MapPin size={11} /> {c.address}</span>}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
+
+      {importPlan && <ImportPreviewModal plan={importPlan} onCancel={() => setImportPlan(null)} onConfirm={onImport} />}
     </div>
   );
 }
@@ -2130,6 +2676,78 @@ function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage
   );
 }
 
+function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
+  const [order, setOrder] = useState("desc");
+
+  if (!company) {
+    return (
+      <div className="view">
+        <EmptyState icon={Building2} title="Empresa não encontrada" hint="Pode ter sido removida." />
+      </div>
+    );
+  }
+
+  const today = todayStr();
+  const items = [];
+  activities.filter((a) => a.companyId === company.id).forEach((a) => {
+    const person = people.find((p) => p.id === a.personId);
+    items.push({
+      key: "a_" + a.id, kind: "Atividade", task: null,
+      date: (a.createdAt || "").split(" ")[0], sort: a.createdAt || "",
+      title: a.title, desc: a.description,
+      chips: [a.interactionType, person && person.name].filter(Boolean),
+    });
+  });
+  tasks.filter((t) => !t.inInbox && t.companyId === company.id).forEach((t) => {
+    const person = people.find((p) => p.id === t.personId);
+    const upcoming = t.dueDate && t.dueDate >= today && t.status !== "Concluída" && t.status !== "Cancelada";
+    items.push({
+      key: "t_" + t.id, kind: upcoming ? "Próxima tarefa" : "Tarefa", task: t,
+      date: upcoming ? t.dueDate : (t.createdAt || "").split(" ")[0],
+      sort: upcoming ? `${t.dueDate} ${t.dueTime || "00:00"}` : (t.createdAt || ""),
+      title: t.title, desc: t.description,
+      chips: [t.category, person && person.name].filter(Boolean),
+    });
+  });
+  items.sort((a, b) => (order === "desc" ? b.sort.localeCompare(a.sort) : a.sort.localeCompare(b.sort)));
+
+  const taskCount = items.filter((i) => i.task).length;
+  const activityCount = items.length - taskCount;
+
+  return (
+    <div className="view">
+      <div className="view-header">
+        <div>
+          <h1>{company.name}</h1>
+          <p className="view-sub">Histórico · {taskCount} tarefa(s) e {activityCount} atividade(s)</p>
+        </div>
+        <select className="pill-select" value={order} onChange={(e) => setOrder(e.target.value)}>
+          <option value="desc">Mais recentes primeiro</option>
+          <option value="asc">Mais antigas primeiro</option>
+        </select>
+      </div>
+
+      <div className="history-list">
+        {items.length === 0 && <EmptyState icon={Activity} title="Nada registrado ainda" hint="As tarefas e atividades desta empresa aparecem aqui." />}
+        {items.map((it) => (
+          <div key={it.key} className={`history-item ${it.task ? "clickable" : ""}`} onClick={it.task ? () => onOpenTask(it.task) : undefined}>
+            <div className="history-date">{formatDateBR(it.date)}</div>
+            <div className="history-body">
+              <div className="history-head">
+                <span className={`history-kind ${it.task ? "task" : "activity"}`}>{it.kind}</span>
+                <span className="history-title">{it.title}</span>
+                {it.task && <StatusPill status={it.task.status} />}
+              </div>
+              {it.desc && <div className="history-desc">{it.desc}</div>}
+              {it.chips.length > 0 && <div className="task-row-meta">{it.chips.map((c, i) => <span key={i} className="meta-chip">{c}</span>)}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSelect }) {
   const [sortBy, setSortBy] = usePersistedSort("people", "recent");
   const sorted = sortEntities(people, sortBy);
@@ -2213,7 +2831,7 @@ function CommercialSummaryBox({ companyId, value, onSave }) {
    ENTITY PROFILE (empresa ou pessoa — resumo + histórico)
    ============================================================ */
 
-function EntityProfile({ target, companies, people, tasks, activities, onEdit, onOpenTask, onOpenRelated, onSeeAllTasks, onNewTask, onNewActivity, onQuickComplete, onUpdateCommercialSummary }) {
+function EntityProfile({ target, companies, people, tasks, activities, onEdit, onOpenTask, onOpenRelated, onOpenSection, onNewTask, onNewActivity, onQuickComplete, onUpdateCommercialSummary }) {
   const isCompany = target.type === "company";
   const entity = isCompany ? companies.find((c) => c.id === target.id) : people.find((p) => p.id === target.id);
 
@@ -2315,14 +2933,15 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
       <div className="profile-quick-actions">
         <button className="btn btn-primary btn-sm" onClick={onNewTask}><Plus size={13} /> Nova tarefa</button>
         <button className="btn btn-ghost btn-sm" onClick={onNewActivity}><Activity size={13} /> Nova atividade</button>
-        <button className="btn btn-ghost btn-sm" onClick={onSeeAllTasks}>Ver todas as tarefas</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => onOpenSection("all")}>Ver todas as tarefas</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => onOpenSection("activities")}>Ver todas as atividades</button>
       </div>
 
       <div className="stat-grid profile-stats">
-        <div className="stat-card"><div className="stat-value">{openTasks.length}</div><div className="stat-label">Tarefas abertas</div></div>
-        <div className="stat-card tone-danger"><div className="stat-value">{overdueCount}</div><div className="stat-label">Atrasadas</div></div>
-        <div className="stat-card tone-success"><div className="stat-value">{doneCount}</div><div className="stat-label">Concluídas</div></div>
-        <div className="stat-card"><div className="stat-value">{entityActivities.length}</div><div className="stat-label">Atividades</div></div>
+        <div className="stat-card stat-card-link" onClick={() => onOpenSection("open")} title="Ver tarefas abertas"><div className="stat-value">{openTasks.length}</div><div className="stat-label">Tarefas abertas</div></div>
+        <div className="stat-card stat-card-link tone-danger" onClick={() => onOpenSection("overdue")} title="Ver tarefas atrasadas"><div className="stat-value">{overdueCount}</div><div className="stat-label">Atrasadas</div></div>
+        <div className="stat-card stat-card-link tone-success" onClick={() => onOpenSection("done")} title="Ver tarefas concluídas"><div className="stat-value">{doneCount}</div><div className="stat-label">Concluídas</div></div>
+        <div className="stat-card stat-card-link" onClick={() => onOpenSection("activities")} title="Ver atividades"><div className="stat-value">{entityActivities.length}</div><div className="stat-label">Atividades</div></div>
       </div>
 
       {isCompany && relatedPeople.length > 0 && (
@@ -2571,7 +3190,7 @@ function SettingsView({ categories, onAdd, onRemove, notificationsEnabled, notif
    SEARCH RESULTS DROPDOWN
    ============================================================ */
 
-function SearchResults({ results, companies, people, onOpenTask, onClose }) {
+function SearchResults({ results, companies, people, onOpenTask, onOpenCompany, onOpenPerson, onClose }) {
   const total = results.tasks.length + results.activities.length + results.companies.length + results.people.length;
   return (
     <div className="search-overlay" onClick={onClose}>
@@ -2599,7 +3218,7 @@ function SearchResults({ results, companies, people, onOpenTask, onClose }) {
           <div className="search-group">
             <div className="search-group-title">Empresas</div>
             {results.companies.map((c) => (
-              <div key={c.id} className="search-item"><Building2 size={13} /> {c.name}</div>
+              <div key={c.id} className="search-item" onClick={() => onOpenCompany(c)}><Building2 size={13} /> {c.name}</div>
             ))}
           </div>
         )}
@@ -2607,7 +3226,7 @@ function SearchResults({ results, companies, people, onOpenTask, onClose }) {
           <div className="search-group">
             <div className="search-group-title">Pessoas</div>
             {results.people.map((p) => (
-              <div key={p.id} className="search-item"><Users size={13} /> {p.name}</div>
+              <div key={p.id} className="search-item" onClick={() => onOpenPerson(p)}><Users size={13} /> {p.name}</div>
             ))}
           </div>
         )}
@@ -2878,7 +3497,7 @@ function FormPageShell({ title, tabs, tab, setTab, onClose, onSave, children }) 
    ============================================================ */
 
 function TaskFormModal({ prefill, companies, people, categories, onClose, onSubmit, onCreateCompany, onCreatePerson }) {
-  const [tab, setTab] = useState("geral");
+  const [attempted, setAttempted] = useState(false);
   const base = prefill && prefill.inInbox ? prefill : prefill && prefill.fromActivity ? {
     title: "", companyId: prefill.fromActivity.companyId, personId: prefill.fromActivity.personId, category: prefill.fromActivity.category,
   } : prefill && prefill.fromProfile ? {
@@ -2913,89 +3532,73 @@ function TaskFormModal({ prefill, companies, people, categories, onClose, onSubm
 
   const taskTitle = isFromActivity ? "Gerar tarefa a partir da atividade" : prefill && prefill.inInbox ? "Processar item da caixa de entrada" : "Nova tarefa";
   function save(e) {
-    if (!form.title.trim()) { setTab("geral"); return; }
-    if (wantsNext && !nextForm.title.trim()) { setTab("detalhes"); return; }
+    setAttempted(true);
+    if (!form.title.trim()) return;
+    if (wantsNext && !nextForm.title.trim()) return;
     submit(e);
   }
 
   return (
-    <FormPageShell
-      title={taskTitle}
-      tabs={[["geral", "GERAL"], ["prazo", "PRAZO E VÍNCULOS"], ["detalhes", "DETALHES"]]}
-      tab={tab} setTab={setTab} onClose={onClose} onSave={save}
-    >
-      {tab === "geral" && (
-        <>
-          <div className="form-page-section">INFORMAÇÕES</div>
-          <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
-          <label>Descrição<textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+    <FormPageShell title={taskTitle} tabs={[]} tab="geral" setTab={() => {}} onClose={onClose} onSave={save}>
+      <div className="form-page-section">INFORMAÇÕES</div>
+      <label>Título<input autoFocus required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") save(e); }} /></label>
+      {attempted && !form.title.trim() && <div className="field-error">Informe o título da tarefa.</div>}
+      <label>Descrição<textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+      <div className="edit-grid">
+        <label>Prioridade
+          <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+            {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+          </select>
+        </label>
+        <label>Status
+          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </label>
+        <label>Categoria
+          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+            <option value="">—</option>
+            {categories.map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </label>
+        <label>Subcategoria<input value={form.subcategory} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
+        <label>Prazo<input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></label>
+        <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
+      </div>
+
+      <div className="form-page-section">VÍNCULOS</div>
+      <div className="edit-grid">
+        <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
+        <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
+      </div>
+
+      <div className="form-page-section">OBSERVAÇÕES E ANEXOS</div>
+      <label>Observações<textarea rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
+      <label>Anexos (link ou referência)<input value={form.attachmentsNote} onChange={(e) => setForm({ ...form, attachmentsNote: e.target.value })} /></label>
+
+      <div className="next-step-toggle" onClick={() => setWantsNext((v) => !v)}>
+        <div className={`toggle-box ${wantsNext ? "on" : ""}`}>{wantsNext && <Check size={11} strokeWidth={3} />}</div>
+        <span>Já criar o próximo passo, linkado a esta tarefa</span>
+      </div>
+      {wantsNext && (
+        <div className="next-step-form">
+          <label>Título do próximo passo
+            <input placeholder='Ex: "Fazer follow-up com o cliente"' value={nextForm.title} onChange={(e) => setNextForm({ ...nextForm, title: e.target.value })} />
+          </label>
+          {attempted && !nextForm.title.trim() && <div className="field-error">Informe o título do próximo passo.</div>}
+          <label>Descrição do próximo passo
+            <textarea rows={2} value={nextForm.description} onChange={(e) => setNextForm({ ...nextForm, description: e.target.value })} />
+          </label>
           <div className="edit-grid">
+            <label>Prazo<input type="date" value={nextForm.dueDate} onChange={(e) => setNextForm({ ...nextForm, dueDate: e.target.value })} /></label>
             <label>Prioridade
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+              <select value={nextForm.priority} onChange={(e) => setNextForm({ ...nextForm, priority: e.target.value })}>
                 {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
               </select>
             </label>
-            <label>Status
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                {STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select>
-            </label>
-            <label>Categoria
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                <option value="">—</option>
-                {categories.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
-            <label>Subcategoria<input value={form.subcategory} onChange={(e) => setForm({ ...form, subcategory: e.target.value })} /></label>
           </div>
-        </>
-      )}
-
-      {tab === "prazo" && (
-        <>
-          <div className="form-page-section">PRAZO</div>
-          <div className="edit-grid">
-            <label>Prazo<input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></label>
-            <label>Horário<input type="time" value={form.dueTime} onChange={(e) => setForm({ ...form, dueTime: e.target.value })} /></label>
-          </div>
-          <div className="form-page-section">VÍNCULOS</div>
-          <div className="edit-grid">
-            <EntityPicker label="Empresa" options={companies} value={form.companyId} onChange={(id) => setForm({ ...form, companyId: id, personId: people.find((p) => p.id === form.personId)?.companyId === id ? form.personId : null })} onCreate={onCreateCompany} />
-            <EntityPicker label="Pessoa" options={form.companyId ? people.filter((p) => p.companyId === form.companyId) : people} value={form.personId} onChange={(id) => setForm({ ...form, personId: id })} onCreate={(name) => onCreatePerson(name, form.companyId)} placeholder={form.companyId ? "Selecionar…" : "Selecione uma empresa primeiro (opcional)"} />
-          </div>
-        </>
-      )}
-
-      {tab === "detalhes" && (
-        <>
-          <div className="form-page-section">OBSERVAÇÕES E ANEXOS</div>
-          <label>Observações<textarea rows={4} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
-          <label>Anexos (link ou referência)<input value={form.attachmentsNote} onChange={(e) => setForm({ ...form, attachmentsNote: e.target.value })} /></label>
-
-          <div className="next-step-toggle" onClick={() => setWantsNext((v) => !v)}>
-            <div className={`toggle-box ${wantsNext ? "on" : ""}`}>{wantsNext && <Check size={11} strokeWidth={3} />}</div>
-            <span>Já criar o próximo passo, linkado a esta tarefa</span>
-          </div>
-          {wantsNext && (
-            <div className="next-step-form">
-              <label>Título do próximo passo
-                <input placeholder='Ex: "Fazer follow-up com o cliente"' value={nextForm.title} onChange={(e) => setNextForm({ ...nextForm, title: e.target.value })} />
-              </label>
-              <label>Descrição do próximo passo
-                <textarea rows={2} value={nextForm.description} onChange={(e) => setNextForm({ ...nextForm, description: e.target.value })} />
-              </label>
-              <div className="edit-grid">
-                <label>Prazo<input type="date" value={nextForm.dueDate} onChange={(e) => setNextForm({ ...nextForm, dueDate: e.target.value })} /></label>
-                <label>Prioridade
-                  <select value={nextForm.priority} onChange={(e) => setNextForm({ ...nextForm, priority: e.target.value })}>
-                    {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-                  </select>
-                </label>
-              </div>
-              <div className="next-step-hint">Empresa, pessoa e categoria serão herdadas da tarefa acima — dá para ajustar depois, na própria tarefa.</div>
-            </div>
-          )}
-        </>
+          <div className="next-step-hint">Empresa, pessoa e categoria serão herdadas da tarefa acima — dá para ajustar depois, na própria tarefa.</div>
+        </div>
       )}
     </FormPageShell>
   );
@@ -3134,9 +3737,14 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
     classification: editing?.classification || "",
     notes: editing?.notes || "",
   });
+  const linkedPeople = editing ? people.filter((p) => p.companyId === editing.id) : [];
   const [contactDrafts, setContactDrafts] = useState([]);
   const [contactForm, setContactForm] = useState({ name: "", role: "", phone: "", email: "" });
-  const linkedPeople = editing ? people.filter((p) => p.companyId === editing.id) : [];
+  const [peopleEdits, setPeopleEdits] = useState({});
+  const personValue = (p, field) => (peopleEdits[p.id] && peopleEdits[p.id][field] !== undefined ? peopleEdits[p.id][field] : (p[field] || ""));
+  function editPerson(p, field, value) {
+    setPeopleEdits((e) => ({ ...e, [p.id]: { ...e[p.id], [field]: value } }));
+  }
 
   function addContactDraft() {
     if (!contactForm.name.trim()) return;
@@ -3148,7 +3756,11 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
     if (!form.name.trim()) { setTab("geral"); return; }
     const address = [form.street, form.addressNumber, form.neighborhood, form.complement]
       .map((x) => (x || "").trim()).filter(Boolean).join(", ");
-    onSubmit({ ...form, address }, contactDrafts);
+    const changedPeople = linkedPeople.filter((p) => peopleEdits[p.id]).map((p) => {
+      const ed = peopleEdits[p.id];
+      return { ...p, ...ed, name: ed.name !== undefined && ed.name.trim() ? ed.name : p.name };
+    });
+    onSubmit({ ...form, address }, contactDrafts, changedPeople);
   }
 
   const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -3226,24 +3838,29 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
 
           {tab === "contato" && (
             <>
-              <div className="form-page-section">CONTATO</div>
-              <div className="edit-grid">
-                <label>Telefone da empresa<input value={form.phone} onChange={f("phone")} /></label>
-                <EntityPicker
-                  label="Pessoa de contato principal"
-                  options={people}
-                  value={form.contactPersonId}
-                  onChange={(id) => setForm({ ...form, contactPersonId: id })}
-                  onCreate={(name) => onCreatePerson(name, null)}
-                  placeholder="Selecionar…"
-                />
-              </div>
+              <div className="form-page-section">PESSOAS NESSA EMPRESA</div>
 
-              <div className="form-page-section">PESSOAS DESTA EMPRESA</div>
-              {linkedPeople.length === 0 && contactDrafts.length === 0 && <div className="side-empty">Nenhuma pessoa vinculada ainda.</div>}
+              {editing && form.phone && (
+                <div className="legacy-phone-note">
+                  <span>Esta empresa tem um telefone no cadastro antigo: <b>{form.phone}</b></span>
+                  <button
+                    type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => {
+                      setContactDrafts((d) => [...d, { name: "Telefone da empresa", role: "", phone: form.phone, email: "" }]);
+                      setForm({ ...form, phone: "" });
+                    }}
+                  >Transformar em contato</button>
+                </div>
+              )}
+
+              {linkedPeople.length === 0 && contactDrafts.length === 0 && <div className="side-empty">Nenhum contato ainda. Adicione abaixo.</div>}
               {linkedPeople.map((p) => (
-                <div key={p.id} className="contact-row">
-                  <b>{p.name}</b><span>{p.role}</span><span>{p.phone}</span><span>{p.email}</span>
+                <div key={p.id} className="contact-add existing">
+                  <input value={personValue(p, "name")} onChange={(e) => editPerson(p, "name", e.target.value)} placeholder="Descrição / nome" />
+                  <input value={personValue(p, "role")} onChange={(e) => editPerson(p, "role", e.target.value)} placeholder="Cargo / função" />
+                  <input value={personValue(p, "phone")} onChange={(e) => editPerson(p, "phone", e.target.value)} placeholder="Telefone / WhatsApp" />
+                  <input value={personValue(p, "email")} onChange={(e) => editPerson(p, "email", e.target.value)} placeholder="E-mail" />
+                  <span />
                 </div>
               ))}
               {contactDrafts.map((c, i) => (
@@ -3254,13 +3871,13 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
               ))}
 
               <div className="contact-add">
-                <input placeholder="Nome" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} />
+                <input placeholder="Descrição / nome (ex: Loja, Financeiro, João)" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} />
                 <input placeholder="Cargo / função" value={contactForm.role} onChange={(e) => setContactForm({ ...contactForm, role: e.target.value })} />
                 <input placeholder="Telefone / WhatsApp" value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} />
                 <input placeholder="E-mail" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} />
                 <button type="button" className="btn btn-primary btn-sm" onClick={addContactDraft}><Plus size={13} /> Adicionar</button>
               </div>
-              <div className="next-step-hint">As pessoas adicionadas aqui são salvas na tela Pessoas, vinculadas a esta empresa, quando você clicar em Salvar.</div>
+              <div className="next-step-hint">Cada linha é salva na tela Pessoas, vinculada a esta empresa, quando você clicar em Salvar. Pode ser uma pessoa ou só um ponto de contato, como o fixo da loja.</div>
             </>
           )}
         </div>
@@ -3699,6 +4316,8 @@ function Style() {
       .contact-row span { color: var(--ink-soft); }
       .contact-row svg { cursor: pointer; color: var(--ink-soft); }
       .contact-add { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.4fr auto; gap: 10px; margin-top: 10px; align-items: center; }
+      .contact-add.existing { margin-top: 0; margin-bottom: 8px; }
+      .legacy-phone-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--brand-blue-soft); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12.5px; }
       .contact-add input { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; }
       @media (max-width: 860px) {
         .form-page-card .edit-grid { grid-template-columns: 1fr; }
@@ -3706,6 +4325,63 @@ function Style() {
         .form-page-body { padding: 12px; }
       }
 
+      .header-actions { display: flex; align-items: center; gap: 12px; }
+      .company-list { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow-card); overflow: hidden; }
+      .company-list-head, .company-row { display: grid; grid-template-columns: minmax(220px, 1.6fr) 1fr 1fr 2.2fr auto; gap: 16px; align-items: center; padding: 14px 18px; text-align: center; }
+      .company-list-head { background: #3A4152; color: #fff; font-size: 13px; font-weight: 600; padding-top: 11px; padding-bottom: 11px; }
+      .company-list-head .left, .company-row-last { text-align: left; }
+      .company-row { border-top: 1px solid var(--border); padding-top: 18px; padding-bottom: 18px; }
+      .company-list-head + .company-row { border-top: none; }
+      .company-row-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+      .company-row-sub { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 4px; }
+      .entity-crm-row.center { justify-content: center; }
+      .company-row-cell { font-size: 13px; color: var(--ink); }
+      .company-row-text { font-size: 13px; line-height: 1.45; }
+      .company-row-desc { margin-top: 3px; font-size: 12.5px; line-height: 1.45; color: var(--ink-soft); white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+      .company-row-kind { color: var(--ink-soft); font-size: 11.5px; }
+      .company-row-actions { display: flex; gap: 6px; }
+      .row-action { border: none; border-radius: 8px; width: 42px; height: 34px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
+      .row-action.edit { background: #2F6FD6; }
+      .row-action.view { background: #7CB518; }
+      .row-action:hover { filter: brightness(1.08); }
+      .search-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+      .search-field { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; box-shadow: var(--shadow-card); color: var(--ink-soft); }
+      .search-field input { border: none; outline: none; background: transparent; flex: 1; font-size: 14px; color: var(--ink); }
+      .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+      .filter-btn { appearance: none; -webkit-appearance: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; text-align: center; text-align-last: center; color: var(--ink); box-shadow: var(--shadow-card); cursor: pointer; font-family: var(--sans); }
+      .filter-btn:hover { border-color: var(--accent); }
+      .filter-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+      .filter-field { position: relative; display: block; }
+      .filter-field-label { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); pointer-events: none; z-index: 1; }
+      .filter-field::after { content: "▾"; position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--ink-soft); pointer-events: none; }
+      .filter-field .filter-btn { width: 100%; padding-left: 150px; padding-right: 32px; text-align: center; text-align-last: center; text-transform: none; letter-spacing: 0; font-size: 13px; }
+      @media (max-width: 860px) {
+        .search-row, .filter-grid { grid-template-columns: 1fr; }
+        .company-list-head { display: none; }
+        .company-row { grid-template-columns: 1fr auto; text-align: left; }
+        .company-row-cell, .company-row-last { grid-column: 1 / -1; }
+      }
+      .history-list { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow-card); overflow: hidden; }
+      .history-item { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 14px 18px; border-top: 1px solid var(--border); }
+      .history-item:first-child { border-top: none; }
+      .history-item.clickable { cursor: pointer; }
+      .history-item.clickable:hover { background: var(--hover); }
+      .history-date { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+      .history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .history-title { font-weight: 600; font-size: 14px; }
+      .history-kind { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+      .history-kind.task { background: var(--accent-soft); color: var(--accent); }
+      .history-kind.activity { background: var(--brand-blue-soft); color: var(--brand-blue); }
+      .history-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink-soft); white-space: pre-line; }
+      @media (max-width: 860px) { .history-item { grid-template-columns: 1fr; gap: 4px; } }
+      .modal-wide { width: 640px; }
+      .import-block { margin-bottom: 14px; }
+      .import-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
+      .import-title-bad { color: var(--danger); }
+      .import-line { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+      .import-problems { max-height: 200px; overflow-y: auto; background: var(--bg); border-radius: 8px; padding: 8px 12px; }
+      .import-problem { font-size: 12.5px; padding: 3px 0; color: var(--ink); }
+      .import-ok { background: #E9F6EF; color: #1E6B41; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-weight: 600; }
       /* Prospecção (kanban) */
       .prospeccao-view { max-width: 100%; }
       .kanban-board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
@@ -3852,7 +4528,6 @@ function Style() {
       .mobile-nav-close { display: none; cursor: pointer; color: var(--ink-soft); margin-left: auto; }
 
       .back-floating { margin-bottom: 14px; }
-      .profile-view { max-width: 760px; }
       .profile-heading { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); }
       .profile-heading h1 { color: var(--ink); }
       .profile-actions { display: flex; gap: 6px; }
@@ -3865,6 +4540,7 @@ function Style() {
       .profile-contact-row { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; flex-wrap: wrap; }
       .profile-contact-row span { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); }
       .profile-contact-row a { color: var(--accent); }
+      .stat-card-link { cursor: pointer; }
       .profile-quick-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
       .profile-stats { margin-bottom: 18px; }
       .profile-people { margin-bottom: 18px; }
