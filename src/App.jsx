@@ -69,7 +69,17 @@ const MODULES_BY_SEGMENT = {
   "Serviços": ["Ordem de serviço", "Estoque", "Financeiro", "Clientes", "Fornecedores", "Orçamento", "Controle de serviços"],
 };
 const ALL_MODULES = Array.from(new Set(Object.values(MODULES_BY_SEGMENT).flat()));
-const INTERACTION_TYPES = ["WhatsApp", "Ligação", "Reunião", "Visita", "Demonstração", "E-mail", "Proposta", "Follow-up", "Observação"];
+const INTERACTION_TYPES = [
+    "Demonstração",
+    "E-mail",
+    "Follow-up",
+    "Ligação",
+    "Observação",
+    "Proposta",
+    "Reunião",
+    "Visita",
+    "WhatsApp"
+];
 
 const STORAGE_KEY = "brdata-rotina-app-v1";
 
