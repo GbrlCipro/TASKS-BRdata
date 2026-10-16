@@ -1,0 +1,7 @@
+- Preciso importar uma lista de ex-clientes. Pra esses ex-clientes além das informações que temos hoje, é necessário que tenha também:
+	- Data de inicio e data de fim do contrato;
+	- Número do contrato;
+	- Valor mensalidade;
+	- (pra esse caso faz sentido exibir o motivo da perda);
+- Na carteira de clientes criar uma flag também pra ocultar os clientes;
+- Troquei o termo "Tempo de cliente" pra "Início do contrato"; Adicionei o status "Inativo" pros Ex-clientes; Coloquei "display:None" no "state-card tone-success" e no "state-label"; REGISTRE ESSAS ALTERAÇÕES pra não desfaze-las;

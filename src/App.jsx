@@ -4,7 +4,7 @@ import {
   BarChart3, Settings, Search, Plus, Clock, AlertCircle, ChevronRight,
   ChevronLeft, X, Link2, History, ArrowRight, Check, Trash2, Edit2,
   Home, Circle, CircleDot, Paperclip, ArrowUpRight, Sparkles, Menu, Mail, Phone,
-  Sun, Moon, MapPin, Tag, Target, MessageCircle, ChevronDown, Eye, Download, Upload
+  Sun, Moon, MapPin, Tag, Target, MessageCircle, ChevronDown, Eye, Download, Upload, Wallet
 } from "lucide-react";
 
 /* ============================================================
@@ -48,15 +48,27 @@ const CRM_STAGE_COLOR = {
   "Fechado-Perdido": "#D64545",
 };
 const ORIGINS = [
-  "Indicação (Parceiro)", "Indicação (Cliente)", "Indicação (Colaborador)",
-  "Prospecção", "Whatsapp", "Instagram", "Visita à empresa", "Diretores",
+  "Antigos", "Diretoria", "Indicação (Cliente)", "Indicação (Colaborador)", "Indicação (Parceiro)", "Instagram",
+  "Prospecção", "Visita à empresa", "Whatsapp", 
 ];
 const SEGMENTS = [
-  "Agronegócio", "Armazéns Gerais", "Atacado e Varejo", "Indústria",
-  "Fiscal/Contábil", "Marmorarias", "Shows/Eventos/Artistas", "Serviços", "Ponto Eletrônico",
+  "Agronegócio", "Atacado e Varejo", "Eventos / Artistas", "Indústria", "Marmoraria",
+  "Serviços",
 ];
 const CLASSIFICATIONS = ["A", "B", "C", "D"];
 const CLASSIFICATION_COLOR = { A: "#2F9E5C", B: "#5C7FA6", C: "#D9822B", D: "#D64545" };
+// Carteira de clientes (Plano Comercial)
+const POTENTIALS = ["Alto", "Médio", "Baixo"];
+const POTENTIAL_COLOR = { Alto: "#2F9E5C", "Médio": "#C9A227", Baixo: "#8B93A7" };
+const CUSTOMER_STATUSES = ["Ativo", "Em risco", "Oportunidade"];
+const CUSTOMER_STATUS_COLOR = { Ativo: "#2F9E5C", "Em risco": "#D64545", Oportunidade: "#F08516" };
+// Matriz de oportunidades por segmento (do Plano Comercial). Os demais segmentos ainda não têm matriz definida.
+const MODULES_BY_SEGMENT = {
+  // Atacado e Varejo reúne o que o plano definia para Mercado e Pet Shop; Serviços, o de Oficina
+  "Atacado e Varejo": ["PDV", "Estoque", "Financeiro", "Compras", "Vendas", "Integração", "Relatórios", "Emissão fiscal", "Cadastro de clientes", "Serviços", "Recorrência"],
+  "Serviços": ["Ordem de serviço", "Estoque", "Financeiro", "Clientes", "Fornecedores", "Orçamento", "Controle de serviços"],
+};
+const ALL_MODULES = Array.from(new Set(Object.values(MODULES_BY_SEGMENT).flat()));
 const INTERACTION_TYPES = ["WhatsApp", "Ligação", "Reunião", "Visita", "Demonstração", "E-mail", "Proposta", "Follow-up", "Observação"];
 
 const STORAGE_KEY = "brdata-rotina-app-v1";
@@ -68,6 +80,7 @@ const NAV = [
   { id: "activities", label: "Atividades", icon: Activity },
   { id: "agenda", label: "Agenda", icon: Calendar },
   { id: "companies", label: "Empresas", icon: Building2 },
+  { id: "carteira", label: "Carteira", icon: Wallet },
   { id: "prospeccao", label: "Prospecção", icon: Target },
   { id: "people", label: "Pessoas", icon: Users },
   { id: "recurring", label: "Recorrentes", icon: Repeat },
@@ -322,6 +335,14 @@ function Badge({ children, color, bg }) {
   );
 }
 
+const ENTITY_TYPE_COLOR = { "Cliente": "#2F9E5C", "Ex-cliente": "#D64545" };
+function EntityTypeBadge({ type }) {
+  if (!type) return null;
+  const c = ENTITY_TYPE_COLOR[type];
+  if (!c) return <Badge>{type}</Badge>;
+  return <span className="badge" style={{ color: c, background: c + "22", fontWeight: 700 }}>{type}</span>;
+}
+
 function PriorityBadge({ priority }) {
   return (
     <span className="pbadge" style={{ "--pc": PRIORITY_COLOR[priority] || "#8B93A7" }}>
@@ -426,6 +447,7 @@ export default function App() {
   const [completingTask, setCompletingTask] = useState(null);
   const [personModal, setPersonModal] = useState(null); // null | "new" | person object
   const [companyModal, setCompanyModal] = useState(null); // null | "new" | company object
+  const [companyFormTab, setCompanyFormTab] = useState("geral"); // guia com que o formulário de empresa abre
   const [recurringModal, setRecurringModal] = useState(null); // null | "new" | recurring object
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -532,6 +554,9 @@ export default function App() {
     const interval = setInterval(checkAndNotify, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [loaded, notificationsEnabled]);
+
+  // ao fechar o formulário de empresa, a próxima abertura volta para a guia Geral
+  useEffect(() => { if (!companyModal) setCompanyFormTab("geral"); }, [companyModal]);
 
   // atalhos de teclado: N = nova tarefa, / = buscar, Esc = fechar o que estiver aberto
   useEffect(() => {
@@ -923,6 +948,14 @@ export default function App() {
       entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
       classification: form.classification || "",
       notes: form.notes || "",
+      mainActivity: form.mainActivity !== undefined ? form.mainActivity : (current?.mainActivity || ""),
+      customerSince: form.customerSince !== undefined ? form.customerSince : (current?.customerSince || ""),
+      lastPurchase: form.lastPurchase !== undefined ? form.lastPurchase : (current?.lastPurchase || ""),
+      plan: form.plan !== undefined ? form.plan : (current?.plan || ""),
+      monthlyValue: form.monthlyValue !== undefined ? form.monthlyValue : (current?.monthlyValue ?? null),
+      modules: form.modules !== undefined ? form.modules : (current?.modules || []),
+      potential: form.potential !== undefined ? form.potential : (current?.potential || ""),
+      customerStatus: form.customerStatus !== undefined ? form.customerStatus : (current?.customerStatus || ""),
       commercialSummary: form.commercialSummary !== undefined ? form.commercialSummary : (current?.commercialSummary || ""),
       lostReason: form.lostReason !== undefined ? form.lostReason : (current?.lostReason || ""),
     };
@@ -970,6 +1003,10 @@ export default function App() {
       entityType: form.entityType || "", crmStage: form.crmStage || "", origin: form.origin || "",
       classification: form.classification || "",
       notes: form.notes || "",
+      mainActivity: form.mainActivity || "",
+      customerSince: form.customerSince || "", lastPurchase: form.lastPurchase || "", plan: form.plan || "",
+      monthlyValue: form.monthlyValue ?? null, modules: form.modules || [],
+      potential: form.potential || "", customerStatus: form.customerStatus || "",
       commercialSummary: "", lostReason: "",
     };
     update((d) => { d.companies = [...d.companies, company]; });
@@ -1200,6 +1237,15 @@ export default function App() {
               onEdit={(c) => setCompanyModal(c)}
               onSelect={(c) => navigateTo("profile", { type: "company", id: c.id })}
               onHistory={(c) => navigateTo("history", { type: "company", id: c.id })}
+              onImport={applyCompaniesImport}
+            />
+          )}
+
+          {view === "carteira" && (
+            <CarteiraView
+              companies={data.companies} activities={data.activities}
+              onEditCarteira={(c) => { setCompanyFormTab("carteira"); setCompanyModal(c); }}
+              onOpenCompany={(c) => navigateTo("profile", { type: "company", id: c.id })}
               onImport={applyCompaniesImport}
             />
           )}
@@ -1456,6 +1502,7 @@ export default function App() {
 
       {companyModal && (
         <CompanyFormPage
+          initialTab={companyFormTab}
           editing={companyModal === "new" ? null : companyModal}
           people={data.people}
           onCreatePerson={upsertPerson}
@@ -1968,6 +2015,7 @@ const COMPANY_SHEET_COLUMNS = [
   { key: "crmStage", header: "Etapa do CRM", width: 20 },
   { key: "origin", header: "Origem", width: 24 },
   { key: "segment", header: "Segmento", width: 22 },
+  { key: "mainActivity", header: "Atividade Principal", width: 36 },
   { key: "classification", header: "Classificação", width: 14 },
   { key: "cep", header: "CEP", width: 12 },
   { key: "uf", header: "UF", width: 6 },
@@ -2139,7 +2187,7 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
           if (col.key === "segment") v = matchChoice(v, SEGMENTS) || v;
           if (col.key === "uf") {
             v = v.toUpperCase();
-            if (!/^[A-Z]{2}$/.test(v)) { errors.push(`UF "${v}" inválida (use a sigla, ex: GO).`); return; }
+            if (!UFS.includes(v)) { errors.push(`UF "${v}" inválida (use a sigla de um estado, ex: GO).`); return; }
           }
           patch[col.key] = v;
         });
@@ -2270,18 +2318,28 @@ function ImportPreviewModal({ plan, onCancel, onConfirm }) {
           {state === "done" && <div className="import-ok">Pronto! {total} alteração(ões) gravada(s).</div>}
           {state === "error" && <div className="field-error">Algo deu errado ao gravar. Confira a conexão e tente de novo (veja o console do navegador).</div>}
 
-          <div className="import-block">
-            <div className="import-title">Empresas</div>
-            <Line label="Novas" n={plan.companyCreates.length} />
-            <Line label="Atualizadas" n={plan.companyUpdates.length} />
-            <Line label="Sem mudança" n={plan.companyUnchanged} />
-          </div>
-          <div className="import-block">
-            <div className="import-title">Contatos</div>
-            <Line label="Novos" n={plan.contactCreates.length} />
-            <Line label="Atualizados" n={plan.contactUpdates.length} />
-            <Line label="Sem mudança" n={plan.contactUnchanged} />
-          </div>
+          {plan.kind === "carteira" ? (
+            <div className="import-block">
+              <div className="import-title">Carteira de clientes</div>
+              <Line label="Atualizados" n={plan.companyUpdates.length} />
+              <Line label="Sem mudança" n={plan.companyUnchanged} />
+            </div>
+          ) : (
+            <>
+              <div className="import-block">
+                <div className="import-title">Empresas</div>
+                <Line label="Novas" n={plan.companyCreates.length} />
+                <Line label="Atualizadas" n={plan.companyUpdates.length} />
+                <Line label="Sem mudança" n={plan.companyUnchanged} />
+              </div>
+              <div className="import-block">
+                <div className="import-title">Contatos</div>
+                <Line label="Novos" n={plan.contactCreates.length} />
+                <Line label="Atualizados" n={plan.contactUpdates.length} />
+                <Line label="Sem mudança" n={plan.contactUnchanged} />
+              </div>
+            </>
+          )}
 
           {plan.problems.length > 0 && (
             <div className="import-block">
@@ -2341,6 +2399,8 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
   const [ufFilter, setUfFilter] = usePersistedState("companies-uf", "Todos");
   const [cityFilter, setCityFilter] = usePersistedState("companies-city", "Todas");
   const [viewMode, setViewMode] = usePersistedState("companies-view-mode", "list");
+  const [showClients, setShowClients] = usePersistedState("companies-show-clients", "1");
+  const [showExClients, setShowExClients] = usePersistedState("companies-show-ex-clients", "1");
   const [qName, setQName] = useState("");
   const [qCity, setQCity] = useState("");
 
@@ -2376,7 +2436,12 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
   const ufOptions = uniqueSorted(companies.map((c) => c.uf), ufFilter, "Todos");
   const cityOptions = uniqueSorted(companies.map((c) => c.city), cityFilter, "Todas");
 
-  let filtered = companies;
+  // Clientes / Ex-clientes desmarcados ficam fora da lista (a não ser que o filtro Tipo peça aquele tipo)
+  const isHiddenType = (c) =>
+    (showClients !== "1" && c.entityType === "Cliente" && entityTypeFilter !== "Cliente") ||
+    (showExClients !== "1" && c.entityType === "Ex-cliente" && entityTypeFilter !== "Ex-cliente");
+  const hiddenCount = companies.filter(isHiddenType).length;
+  let filtered = companies.filter((c) => !isHiddenType(c));
   if (entityTypeFilter !== "Todos") filtered = filtered.filter((c) => c.entityType === entityTypeFilter);
   if (crmStageFilter !== "Todas") filtered = filtered.filter((c) => c.crmStage === crmStageFilter);
   if (classificationFilter !== "Todas") filtered = filtered.filter((c) => c.classification === classificationFilter);
@@ -2405,7 +2470,7 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
       <div className="view-header">
         <div>
           <h1>Empresas</h1>
-          <p className="view-sub">{sorted.length} de {companies.length} cadastradas</p>
+          <p className="view-sub">{sorted.length} de {companies.length} cadastradas{hiddenCount > 0 ? ` · ${hiddenCount} oculta(s) pelo tipo` : ""}</p>
         </div>
         <div className="header-actions">
           <div className="pill-row">
@@ -2422,6 +2487,12 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
       <div className="search-row">
         <div className="search-field"><Search size={16} /><input placeholder="pesquisar por nome, razão social ou CNPJ…" value={qName} onChange={(e) => setQName(e.target.value)} /></div>
         <div className="search-field"><Search size={16} /><input placeholder="pesquisar cidade…" value={qCity} onChange={(e) => setQCity(e.target.value)} /></div>
+      </div>
+
+      <div className="type-visibility">
+        <span>Exibir na lista:</span>
+        <label className="filter-check"><input type="checkbox" checked={showClients === "1"} onChange={(e) => setShowClients(e.target.checked ? "1" : "0")} /> Clientes</label>
+        <label className="filter-check"><input type="checkbox" checked={showExClients === "1"} onChange={(e) => setShowExClients(e.target.checked ? "1" : "0")} /> Ex-clientes</label>
       </div>
 
       <div className="filter-grid">
@@ -2460,7 +2531,7 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                   {c.razaoSocial && c.razaoSocial !== c.name && <div className="company-row-sub">Razão social: {c.razaoSocial}</div>}
                   {(c.entityType || c.crmStage || c.classification) && (
                     <div className="entity-crm-row center">
-                      {c.entityType && <Badge>{c.entityType}</Badge>}
+                      {c.entityType && <EntityTypeBadge type={c.entityType} />}
                       <CrmStageBadge stage={c.crmStage} />
                       <ClassificationBadge classification={c.classification} />
                     </div>
@@ -2508,7 +2579,7 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                 </div>
                 {(c.entityType || c.crmStage || c.classification) && (
                   <div className="entity-crm-row">
-                    {c.entityType && <Badge>{c.entityType}</Badge>}
+                    {c.entityType && <EntityTypeBadge type={c.entityType} />}
                     <CrmStageBadge stage={c.crmStage} />
                     <ClassificationBadge classification={c.classification} />
                   </div>
@@ -2551,7 +2622,7 @@ function KanbanCard({ company, onOpen, onEdit, onLogContact, onDragStart }) {
         <button className="icon-btn kanban-card-edit" onClick={(e) => { e.stopPropagation(); onEdit(company); }} title="Editar"><Edit2 size={11} /></button>
       </div>
       <div className="kanban-card-badges">
-        {company.entityType && <Badge>{company.entityType}</Badge>}
+        {company.entityType && <EntityTypeBadge type={company.entityType} />}
         <ClassificationBadge classification={company.classification} />
       </div>
       {(company.segment || company.city) && (
@@ -2672,6 +2743,382 @@ function ProspeccaoView({ companies, onOpenCompany, onEditCompany, onChangeStage
           }}
         />
       )}
+    </div>
+  );
+}
+
+function ColorBadge({ label, color }) {
+  const c = color || "#8B93A7";
+  return <span className="badge" style={{ color: c, background: c + "22", fontWeight: 700 }}>{label}</span>;
+}
+
+function parseMoney(v) {
+  if (v == null) return null;
+  let t = String(v).replace(/[^\d.,-]/g, "").trim();
+  if (!t) return null;
+  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, "");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+const formatMoney = (n) => (n == null || n === "" ? "—" : Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+
+function customerTenure(since) {
+  if (!since) return "";
+  const a = parseLocalDate(since), b = new Date();
+  let months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+  if (b.getDate() < a.getDate()) months -= 1;
+  if (months < 1) return "menos de 1 mês";
+  const y = Math.floor(months / 12), m = months % 12;
+  const ys = y ? `${y} ${y === 1 ? "ano" : "anos"}` : "";
+  const ms = m ? `${m} ${m === 1 ? "mês" : "meses"}` : "";
+  return [ys, ms].filter(Boolean).join(" e ");
+}
+
+function daysSince(dateStr) {
+  return Math.floor((parseLocalDate(todayStr()) - parseLocalDate(dateStr)) / 86400000);
+}
+
+function lastContactDate(companyId, activities) {
+  let best = "";
+  activities.forEach((a) => { if (a.companyId === companyId && (a.createdAt || "") > best) best = a.createdAt; });
+  return best ? best.split(" ")[0] : "";
+}
+
+/* ============================================================
+   CARTEIRA DE CLIENTES (Plano Comercial: "quanto já compra e quanto ainda poderia comprar")
+   ============================================================ */
+
+/* ============================================================
+   EXCEL DA CARTEIRA (exportar / importar — todas as colunas da carteira)
+   ============================================================ */
+
+const CARTEIRA_SHEET_COLUMNS = [
+  { key: "id", header: "ID", width: 24 },
+  { key: "name", header: "Cliente", width: 32 },
+  { key: "segment", header: "Segmento", width: 24 },
+  { key: "customerSince", header: "Cliente desde", width: 16 },
+  { key: "plan", header: "Plano contratado", width: 26 },
+  { key: "monthlyValue", header: "Valor mensal", width: 14 },
+  { key: "modules", header: "Módulos contratados", width: 42 },
+  { key: "lastPurchase", header: "Última compra", width: 16 },
+  { key: "potential", header: "Potencial", width: 12 },
+  { key: "customerStatus", header: "Status", width: 14 },
+];
+const CARTEIRA_READONLY_HEADERS = ["Tempo de cliente (só consulta)", "Módulos não contratados (só consulta)", "Último contato (só consulta)"];
+
+async function exportCarteiraToExcel(companies, activities, includeEx) {
+  const XLSX = await import("xlsx");
+  const list = companies
+    .filter((c) => c.entityType === "Cliente" || (includeEx && c.entityType === "Ex-cliente"))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
+  const rows = list.map((c) => {
+    const modules = c.modules || [];
+    const catalog = MODULES_BY_SEGMENT[c.segment];
+    const lc = lastContactDate(c.id, activities);
+    return [
+      c.id, c.name || "", c.segment || "",
+      c.customerSince ? formatDateBR(c.customerSince) : "", c.plan || "",
+      c.monthlyValue == null ? "" : c.monthlyValue,
+      modules.join("; "), c.lastPurchase ? formatDateBR(c.lastPurchase) : "",
+      c.potential || "", c.customerStatus || "",
+      c.customerSince ? customerTenure(c.customerSince) : "",
+      catalog ? catalog.filter((m) => !modules.includes(m)).join("; ") : "",
+      lc ? formatDateBR(lc) : "",
+    ];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([[...CARTEIRA_SHEET_COLUMNS.map((col) => col.header), ...CARTEIRA_READONLY_HEADERS], ...rows]);
+  ws["!cols"] = [...CARTEIRA_SHEET_COLUMNS.map((col) => ({ wch: col.width })), { wch: 26 }, { wch: 40 }, { wch: 18 }];
+
+  const lists = [
+    ["Potencial", POTENTIALS], ["Status", CUSTOMER_STATUSES],
+    ...Object.entries(MODULES_BY_SEGMENT).map(([seg, mods]) => [`Módulos - ${seg}`, mods]),
+    ["Módulos - lista geral", ALL_MODULES],
+  ];
+  const maxLen = Math.max(...lists.map(([, vals]) => vals.length));
+  const wsLists = XLSX.utils.aoa_to_sheet([
+    lists.map(([title]) => title),
+    ...Array.from({ length: maxLen }, (_, i) => lists.map(([, vals]) => vals[i] || "")),
+  ]);
+  wsLists["!cols"] = lists.map(() => ({ wch: 26 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Carteira");
+  XLSX.utils.book_append_sheet(wb, wsLists, "Listas");
+  XLSX.writeFileXLSX(wb, `carteira-${todayStr()}.xlsx`);
+}
+
+// converte o que o Excel entrega numa data ISO (AAAA-MM-DD) ou null se não der para entender
+function parseDateCell(v) {
+  const iso = (y, m, d) => {
+    const t = new Date(y, m - 1, d);
+    if (t.getFullYear() !== y || t.getMonth() !== m - 1 || t.getDate() !== d) return null;
+    return `${y}-${pad(m)}-${pad(d)}`;
+  };
+  if (v instanceof Date) {
+    const x = new Date(v.getTime() + 12 * 3600 * 1000);
+    return iso(x.getUTCFullYear(), x.getUTCMonth() + 1, x.getUTCDate());
+  }
+  if (typeof v === "number") {
+    if (v < 20000 || v > 80000) return null;
+    const x = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return iso(x.getUTCFullYear(), x.getUTCMonth() + 1, x.getUTCDate());
+  }
+  const t = String(v).trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return iso(Number(m[1]), Number(m[2]), Number(m[3]));
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (m) {
+    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return iso(y, Number(m[2]), Number(m[1]));
+  }
+  return null;
+}
+
+function parseCarteiraWorkbook(XLSX, buffer, companies) {
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+  const plan = {
+    kind: "carteira",
+    companyCreates: [], companyUpdates: [], companyUnchanged: 0,
+    contactCreates: [], contactUpdates: [], contactUnchanged: 0,
+    problems: [],
+  };
+  const problem = (row, message) => plan.problems.push({ sheet: "Carteira", row, message });
+  const sheetName = wb.SheetNames.find((n) => normText(n) === "carteira");
+  if (!sheetName) {
+    problem(0, 'Não encontrei a aba "Carteira". Use o arquivo exportado pela tela Carteira.');
+    return plan;
+  }
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "", raw: true });
+  if (!rows.length) return plan;
+
+  const header = rows[0].map((h) => normText(String(h == null ? "" : h)));
+  const idx = {};
+  CARTEIRA_SHEET_COLUMNS.forEach((col) => { const i = header.indexOf(normText(col.header)); if (i >= 0) idx[col.key] = i; });
+  if (idx.id === undefined && idx.name === undefined) {
+    problem(1, 'Não encontrei as colunas "ID" nem "Cliente".');
+    return plan;
+  }
+  const isEmpty = (v) => v == null || (typeof v === "string" && !v.trim());
+  const raw = (r, key) => (idx[key] === undefined ? "" : r[idx[key]]);
+  const text = (r, key) => { const v = raw(r, key); return isEmpty(v) ? "" : String(v).trim(); };
+
+  rows.slice(1).forEach((r, i) => {
+    const rowNum = i + 2;
+    if (CARTEIRA_SHEET_COLUMNS.every((col) => isEmpty(raw(r, col.key)))) return; // linha vazia
+
+    const id = text(r, "id");
+    const name = text(r, "name");
+    let existing = null;
+    if (id) {
+      existing = companies.find((c) => c.id === id);
+      if (!existing) return problem(rowNum, `ID "${id}" não existe no sistema (não apague nem altere a coluna ID).`);
+    } else {
+      if (!name) return problem(rowNum, "Linha sem ID e sem nome do cliente.");
+      existing = companies.find((c) => normText(c.name) === normText(name));
+      if (!existing) return problem(rowNum, `Cliente "${name}" não encontrado. Esta importação só atualiza empresas já cadastradas.`);
+    }
+
+    const patch = {};
+    const errors = [];
+    const seg = text(r, "segment");
+    if (seg) patch.segment = matchChoice(seg, SEGMENTS) || seg;
+    if (text(r, "plan")) patch.plan = text(r, "plan");
+
+    [["customerSince", "Cliente desde"], ["lastPurchase", "Última compra"]].forEach(([key, label]) => {
+      const v = raw(r, key);
+      if (isEmpty(v)) return;
+      const d = parseDateCell(v);
+      if (!d) errors.push(`${label}: data inválida "${String(v)}" (use DD/MM/AAAA).`);
+      else patch[key] = d;
+    });
+
+    const mv = raw(r, "monthlyValue");
+    if (!isEmpty(mv)) {
+      const n = parseMoney(mv);
+      if (n == null || n < 0) errors.push(`Valor mensal: não entendi "${String(mv)}".`);
+      else patch.monthlyValue = n;
+    }
+
+    const pot = text(r, "potential");
+    if (pot) {
+      const m = matchChoice(pot, POTENTIALS);
+      if (!m) errors.push(`Potencial "${pot}" não é válido (Alto, Médio ou Baixo).`); else patch.potential = m;
+    }
+    const st = text(r, "customerStatus");
+    if (st) {
+      const m = matchChoice(st, CUSTOMER_STATUSES);
+      if (!m) errors.push(`Status "${st}" não é válido (Ativo, Em risco ou Oportunidade).`); else patch.customerStatus = m;
+    }
+
+    const modText = text(r, "modules");
+    if (modText) {
+      const segmentNow = patch.segment || existing.segment;
+      const allowed = Array.from(new Set([...(MODULES_BY_SEGMENT[segmentNow] || ALL_MODULES), ...(existing.modules || [])]));
+      const names = modText.split(/[;,\n]/).map((x) => x.trim()).filter(Boolean);
+      const bad = [];
+      const good = [];
+      names.forEach((nm) => { const m = matchChoice(nm, allowed); if (m) { if (!good.includes(m)) good.push(m); } else bad.push(nm); });
+      if (bad.length) errors.push(`Módulos inválidos para ${segmentNow || "este segmento"}: ${bad.join(", ")} (veja a aba Listas).`);
+      else patch.modules = good;
+    }
+    if (errors.length) return errors.forEach((m) => problem(rowNum, m));
+
+    const same = (k) => {
+      if (k === "modules") return JSON.stringify([...(existing.modules || [])].sort()) === JSON.stringify([...patch.modules].sort());
+      if (k === "monthlyValue") return Number(existing.monthlyValue) === patch.monthlyValue && existing.monthlyValue != null;
+      return (existing[k] || "") === patch[k];
+    };
+    const diff = {};
+    Object.keys(patch).forEach((k) => { if (!same(k)) diff[k] = patch[k]; });
+    if (Object.keys(diff).length === 0) { plan.companyUnchanged += 1; return; }
+    const prev = plan.companyUpdates.find((u) => u.id === existing.id);
+    if (prev) Object.assign(prev.patch, diff);
+    else plan.companyUpdates.push({ id: existing.id, name: existing.name, patch: diff, row: rowNum });
+  });
+
+  return plan;
+}
+
+function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, onImport }) {
+  const [q, setQ] = useState("");
+  const fileRef = useRef(null);
+  const [importPlan, setImportPlan] = useState(null);
+  const [segmentFilter, setSegmentFilter] = usePersistedState("carteira-segment", "Todos");
+  const [potentialFilter, setPotentialFilter] = usePersistedState("carteira-potential", "Todos");
+  const [statusFilter, setStatusFilter] = usePersistedState("carteira-status", "Todos");
+  const [sortBy, setSortBy] = usePersistedState("carteira-sort", "name");
+  const [showEx, setShowEx] = usePersistedState("carteira-show-ex", "0");
+
+  async function handleExport() {
+    try {
+      await exportCarteiraToExcel(companies, activities, showEx === "1");
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível gerar o Excel. Confirme que a biblioteca foi instalada (npm install) e reinicie o npm run dev.");
+    }
+  }
+  async function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      setImportPlan(parseCarteiraWorkbook(XLSX, buffer, companies));
+    } catch (err) {
+      console.error(err);
+      alert("Não consegui ler esse arquivo. Use a planilha .xlsx exportada pela tela Carteira.");
+    }
+  }
+
+  const base = companies.filter((c) => c.entityType === "Cliente" || (showEx === "1" && c.entityType === "Ex-cliente"));
+  const segmentOptions = Array.from(new Set([
+    ...SEGMENTS, ...base.map((c) => c.segment).filter(Boolean), ...(segmentFilter !== "Todos" ? [segmentFilter] : []),
+  ])).sort((x, y) => x.localeCompare(y, "pt-BR"));
+
+  let rows = base.map((c) => {
+    const contracted = c.modules || [];
+    const catalog = MODULES_BY_SEGMENT[c.segment];
+    return {
+      c, contracted,
+      opportunities: catalog ? catalog.filter((m) => !contracted.includes(m)) : null,
+      lastContact: lastContactDate(c.id, activities),
+    };
+  });
+  if (segmentFilter !== "Todos") rows = rows.filter((r) => r.c.segment === segmentFilter);
+  if (potentialFilter !== "Todos") rows = rows.filter((r) => r.c.potential === potentialFilter);
+  if (statusFilter !== "Todos") rows = rows.filter((r) => r.c.customerStatus === statusFilter);
+  if (q.trim()) rows = rows.filter((r) => normText(r.c.name).includes(normText(q)));
+
+  const sorters = {
+    name: (a, b) => (a.c.name || "").localeCompare(b.c.name || "", "pt-BR"),
+    value: (a, b) => (b.c.monthlyValue || 0) - (a.c.monthlyValue || 0),
+    tenure: (a, b) => (a.c.customerSince || "9999").localeCompare(b.c.customerSince || "9999"),
+    contact: (a, b) => (a.lastContact || "").localeCompare(b.lastContact || ""),
+  };
+  rows = [...rows].sort(sorters[sortBy] || sorters.name);
+
+  const total = rows.reduce((sum, r) => sum + (r.c.monthlyValue || 0), 0);
+  const atRisk = rows.filter((r) => r.c.customerStatus === "Em risco").length;
+  const withOpp = rows.filter((r) => r.opportunities && r.opportunities.length > 0).length;
+
+  return (
+    <div className="view">
+      <div className="view-header">
+        <div>
+          <h1>Carteira de clientes</h1>
+          <p className="view-sub">Quanto cada cliente já compra da BRdata e quanto ainda poderia comprar.</p>
+        </div>
+        <div className="header-actions">
+          <button className="btn btn-ghost" onClick={handleExport}><Download size={14} /> Exportar Excel</button>
+          <button className="btn btn-ghost" onClick={() => fileRef.current && fileRef.current.click()}><Upload size={14} /> Importar Excel</button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={handleImportFile} />
+        </div>
+      </div>
+
+      <div className="stat-grid">
+        <div className="stat-card"><div className="stat-value">{rows.length}</div><div className="stat-label">Clientes</div></div>
+        <div className="stat-card tone-success"><div className="stat-value">{formatMoney(total)}</div><div className="stat-label">Receita mensal</div></div>
+        <div className="stat-card tone-danger"><div className="stat-value">{atRisk}</div><div className="stat-label">Em risco</div></div>
+        <div className="stat-card tone-next"><div className="stat-value">{withOpp}</div><div className="stat-label">Com oportunidade de venda</div></div>
+      </div>
+
+      <div className="search-row">
+        <div className="search-field"><Search size={16} /><input placeholder="pesquisar cliente…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="type-visibility">
+          <label className="filter-check"><input type="checkbox" checked={showEx === "1"} onChange={(e) => setShowEx(e.target.checked ? "1" : "0")} /> Incluir ex-clientes</label>
+        </div>
+      </div>
+
+      <div className="filter-grid">
+        <FilterSelect label="Filtrar por segmento" value={segmentFilter} onChange={setSegmentFilter} options={segmentOptions} allValue="Todos" />
+        <FilterSelect label="Filtrar por potencial" value={potentialFilter} onChange={setPotentialFilter} options={POTENTIALS} allValue="Todos" />
+        <FilterSelect label="Filtrar por status" value={statusFilter} onChange={setStatusFilter} options={CUSTOMER_STATUSES} allValue="Todos" />
+        <label className="filter-field">
+          <span className="filter-field-label">Ordenar</span>
+          <select className="filter-btn" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+            <option value="name">Nome (A-Z)</option>
+            <option value="value">Maior valor mensal</option>
+            <option value="tenure">Cliente há mais tempo</option>
+            <option value="contact">Sem contato há mais tempo</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="carteira-wrap">
+        <table className="carteira-table">
+          <thead>
+            <tr>
+              <th>Cliente</th><th>Segmento</th><th>Tempo de cliente</th><th>Último contato</th><th>Status</th><th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ c, lastContact }) => (
+              <tr key={c.id}>
+                <td><div className="carteira-name">{c.name}</div><EntityTypeBadge type={c.entityType} /></td>
+                <td>{c.segment || "—"}</td>
+                <td>{c.customerSince ? customerTenure(c.customerSince) : "—"}</td>
+                <td>
+                  {lastContact
+                    ? <>{formatDateBR(lastContact)}<span className="carteira-sub">há {daysSince(lastContact)} dia(s)</span></>
+                    : <span className="carteira-muted">sem contato</span>}
+                </td>
+                <td>{c.customerStatus ? <ColorBadge label={c.customerStatus} color={CUSTOMER_STATUS_COLOR[c.customerStatus]} /> : "—"}</td>
+                <td>
+                  <div className="company-row-actions">
+                    <button className="row-action edit" onClick={() => onEditCarteira(c)} title="Editar carteira"><Edit2 size={15} /></button>
+                    <button className="row-action view" onClick={() => onOpenCompany(c)} title="Abrir empresa"><Eye size={15} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && <EmptyState icon={Wallet} title="Nenhum cliente na carteira" hint="Clientes são as empresas com Tipo = Cliente. Ajuste os filtros ou cadastre os dados na guia Carteira da empresa." />}
+      </div>
+
+      {importPlan && <ImportPreviewModal plan={importPlan} onCancel={() => setImportPlan(null)} onConfirm={onImport} />}
     </div>
   );
 }
@@ -2881,10 +3328,21 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
 
       {isCompany && (entity.entityType || entity.crmStage || entity.classification || entity.origin) && (
         <div className="profile-crm-row">
-          {entity.entityType && <Badge>{entity.entityType}</Badge>}
+          {entity.entityType && <EntityTypeBadge type={entity.entityType} />}
           <CrmStageBadge stage={entity.crmStage} />
           <ClassificationBadge classification={entity.classification} />
           {entity.origin && <span className="meta-chip"><Tag size={11} /> {entity.origin}</span>}
+        </div>
+      )}
+
+      {isCompany && (entity.plan || entity.monthlyValue != null || entity.customerSince || entity.potential || entity.customerStatus || (entity.modules || []).length > 0) && (
+        <div className="profile-crm-row">
+          {entity.customerStatus && <ColorBadge label={entity.customerStatus} color={CUSTOMER_STATUS_COLOR[entity.customerStatus]} />}
+          {entity.potential && <ColorBadge label={`Potencial ${entity.potential}`} color={POTENTIAL_COLOR[entity.potential]} />}
+          {entity.plan && <span className="meta-chip">{entity.plan}</span>}
+          {entity.monthlyValue != null && <span className="meta-chip">{formatMoney(entity.monthlyValue)}/mês</span>}
+          {entity.customerSince && <span className="meta-chip">Cliente há {customerTenure(entity.customerSince)}</span>}
+          {(entity.modules || []).length > 0 && <span className="meta-chip">{entity.modules.length} módulo(s): {entity.modules.join(", ")}</span>}
         </div>
       )}
 
@@ -2908,10 +3366,11 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
           {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
         </div>
       )}
-      {isCompany && (entity.razaoSocial || entity.cnpj) && (
+      {isCompany && (entity.razaoSocial || entity.cnpj || entity.mainActivity) && (
         <div className="profile-contact-row">
           {entity.razaoSocial && <span>{entity.razaoSocial}</span>}
           {entity.cnpj && <span>CNPJ {entity.cnpj}</span>}
+          {entity.mainActivity && <span>Atividade: {entity.mainActivity}</span>}
         </div>
       )}
       {isCompany && (entity.phone || entity.address || entity.location) && (
@@ -3722,10 +4181,109 @@ function PersonFormModal({ companies, editing, onClose, onSubmit, onCreateCompan
    COMPANY FORM MODAL
    ============================================================ */
 
-function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson }) {
-  const [tab, setTab] = useState("geral");
+/* ============================================================
+   CONSULTA DE CNPJ E CEP (BrasilAPI / ViaCEP)
+   ============================================================ */
+
+const digitsOf = (v) => (v || "").toString().replace(/\D/g, "");
+const formatCnpj = (d) => d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+const formatCep = (d) => d.replace(/^(\d{5})(\d{3})$/, "$1-$2");
+
+function isValidCnpj(d) {
+  if (d.length !== 14 || /^(\d)\1+$/.test(d)) return false;
+  const calc = (len) => {
+    let sum = 0, pos = len - 7;
+    for (let i = len; i >= 1; i--) { sum += Number(d[len - i]) * pos--; if (pos < 2) pos = 9; }
+    const r = sum % 11;
+    return r < 2 ? 0 : 11 - r;
+  };
+  return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
+}
+
+const UF_LIST = [["AC", "Acre"], ["AL", "Alagoas"], ["AP", "Amapá"], ["AM", "Amazonas"], ["BA", "Bahia"], ["CE", "Ceará"],
+  ["DF", "Distrito Federal"], ["ES", "Espírito Santo"], ["GO", "Goiás"], ["MA", "Maranhão"], ["MT", "Mato Grosso"],
+  ["MS", "Mato Grosso do Sul"], ["MG", "Minas Gerais"], ["PA", "Pará"], ["PB", "Paraíba"], ["PR", "Paraná"],
+  ["PE", "Pernambuco"], ["PI", "Piauí"], ["RJ", "Rio de Janeiro"], ["RN", "Rio Grande do Norte"],
+  ["RS", "Rio Grande do Sul"], ["RO", "Rondônia"], ["RR", "Roraima"], ["SC", "Santa Catarina"],
+  ["SP", "São Paulo"], ["SE", "Sergipe"], ["TO", "Tocantins"]];
+const UFS = UF_LIST.map(([u]) => u);
+
+// Cidades de cada UF vêm do IBGE (uma vez por estado; depois ficam guardadas no navegador)
+const cityCache = {};
+async function loadCities(uf) {
+  if (!uf) return [];
+  if (cityCache[uf]) return cityCache[uf];
+  try {
+    const saved = localStorage.getItem("rotina-cities-" + uf);
+    if (saved) { cityCache[uf] = JSON.parse(saved); return cityCache[uf]; }
+  } catch (e) { /* sem armazenamento: segue para a consulta */ }
+  const res = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios?orderBy=nome`);
+  if (!res.ok) throw new Error("Não foi possível carregar as cidades.");
+  const list = (await res.json()).map((m) => m.nome);
+  cityCache[uf] = list;
+  try { localStorage.setItem("rotina-cities-" + uf, JSON.stringify(list)); } catch (e) { /* ignora */ }
+  return list;
+}
+// ajusta "JATAI" (da Receita) para o nome oficial "Jataí" do IBGE; se não achar, mantém como veio
+async function canonicalCity(uf, name) {
+  if (!uf || !name) return name || "";
+  try {
+    const list = await loadCities(uf);
+    return list.find((c) => normText(c) === normText(name)) || name;
+  } catch (e) { return name; }
+}
+
+const SMALL_WORDS = new Set(["de", "da", "do", "das", "dos", "e"]);
+function titleCaseBR(str) {
+  return str.toLowerCase().split(/\s+/).map((w, i) => (i > 0 && SMALL_WORDS.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+}
+// a Receita devolve endereço em MAIÚSCULAS; só ajustamos quando vem tudo em maiúsculas
+const niceCase = (str) => (str && str === str.toUpperCase() ? titleCaseBR(str) : (str || ""));
+
+async function fetchCnpjData(d) {
+  let res;
+  try {
+    res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${d}`);
+  } catch (e) {
+    throw new Error("Sem conexão com o serviço de consulta. Confira a internet.");
+  }
+  if (res.status === 404) throw new Error("CNPJ não encontrado na Receita.");
+  if (!res.ok) throw new Error("O serviço de consulta está indisponível agora. Tente de novo em instantes.");
+  const x = await res.json();
+  const street = [x.descricao_tipo_de_logradouro, x.logradouro].filter(Boolean).join(" ");
+  return {
+    razaoSocial: x.razao_social || "", fantasia: x.nome_fantasia || "",
+    cep: digitsOf(x.cep), uf: (x.uf || "").toUpperCase(), city: niceCase(x.municipio), neighborhood: niceCase(x.bairro),
+    street: niceCase(street), addressNumber: x.numero || "", complement: niceCase(x.complemento),
+    situation: x.descricao_situacao_cadastral || "", cnae: x.cnae_fiscal_descricao || "",
+  };
+}
+
+async function fetchCepData(d) {
+  try {
+    const r = await fetch(`https://brasilapi.com.br/api/cep/v2/${d}`);
+    if (r.ok) {
+      const x = await r.json();
+      return { uf: (x.state || "").toUpperCase(), city: niceCase(x.city), neighborhood: niceCase(x.neighborhood), street: niceCase(x.street) };
+    }
+    if (r.status !== 404) throw new Error("brasilapi");
+  } catch (e) { /* tenta o ViaCEP */ }
+  let r2;
+  try {
+    r2 = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+  } catch (e) {
+    throw new Error("Sem conexão com o serviço de consulta. Confira a internet.");
+  }
+  if (!r2.ok) throw new Error("O serviço de consulta de CEP está indisponível agora.");
+  const x2 = await r2.json();
+  if (x2.erro) throw new Error("CEP não encontrado.");
+  return { uf: (x2.uf || "").toUpperCase(), city: niceCase(x2.localidade), neighborhood: niceCase(x2.bairro), street: niceCase(x2.logradouro) };
+}
+
+function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, initialTab }) {
+  const [tab, setTab] = useState(initialTab || "geral");
   const [form, setForm] = useState({
-    name: editing?.name || "", razaoSocial: editing?.razaoSocial || "", cnpj: editing?.cnpj || "",
+    name: editing?.name || "", razaoSocial: editing?.razaoSocial || "", cnpj: editing?.cnpj || "", mainActivity: editing?.mainActivity || "",
     segment: editing?.segment || "", city: editing?.city || "", uf: editing?.uf || "",
     cep: editing?.cep || "",
     street: editing?.street || (editing && !editing.street ? editing.address || "" : ""),
@@ -3736,6 +4294,10 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
     entityType: editing?.entityType || "", crmStage: editing?.crmStage || "", origin: editing?.origin || "",
     classification: editing?.classification || "",
     notes: editing?.notes || "",
+    customerSince: editing?.customerSince || "", lastPurchase: editing?.lastPurchase || "",
+    monthlyValue: editing?.monthlyValue != null ? String(editing.monthlyValue).replace(".", ",") : "",
+    plan: editing?.plan || "", potential: editing?.potential || "", customerStatus: editing?.customerStatus || "",
+    modules: Array.isArray(editing?.modules) ? editing.modules : [],
   });
   const linkedPeople = editing ? people.filter((p) => p.companyId === editing.id) : [];
   const [contactDrafts, setContactDrafts] = useState([]);
@@ -3744,6 +4306,74 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
   const personValue = (p, field) => (peopleEdits[p.id] && peopleEdits[p.id][field] !== undefined ? peopleEdits[p.id][field] : (p[field] || ""));
   function editPerson(p, field, value) {
     setPeopleEdits((e) => ({ ...e, [p.id]: { ...e[p.id], [field]: value } }));
+  }
+
+  const formRef = useRef(form);
+  formRef.current = form;
+  const [cityList, setCityList] = useState([]);
+  const [cityStatus, setCityStatus] = useState("idle"); // idle | loading | ok | error
+  useEffect(() => {
+    let cancelled = false;
+    if (!form.uf) { setCityList([]); setCityStatus("idle"); return undefined; }
+    setCityStatus("loading");
+    loadCities(form.uf)
+      .then((list) => { if (!cancelled) { setCityList(list); setCityStatus("ok"); } })
+      .catch(() => { if (!cancelled) { setCityList([]); setCityStatus("error"); } });
+    return () => { cancelled = true; };
+  }, [form.uf]);
+  const lastLookup = useRef({ cnpj: "", cep: "" });
+  const [lookup, setLookup] = useState({ cnpj: null, cep: null });
+  const setLookupMsg = (key, status, msg) => setLookup((l) => ({ ...l, [key]: msg ? { status, msg } : null }));
+
+  async function lookupCnpj(raw) {
+    const d = digitsOf(raw);
+    if (d.length !== 14) return setLookupMsg("cnpj", "error", "Digite os 14 números do CNPJ.");
+    if (!isValidCnpj(d)) return setLookupMsg("cnpj", "error", "CNPJ inválido. Confira os números.");
+    lastLookup.current.cnpj = d;
+    setLookupMsg("cnpj", "loading", "Consultando a Receita…");
+    try {
+      const r = await fetchCnpjData(d);
+      r.city = await canonicalCity(r.uf, r.city);
+      const prev = formRef.current;
+      const patch = { cnpj: formatCnpj(d) };
+      const filled = [];
+      const fill = (key, value, label) => {
+        if (value && !(prev[key] || "").toString().trim()) { patch[key] = value; filled.push(label); }
+      };
+      fill("razaoSocial", r.razaoSocial, "Razão Social");
+      fill("name", r.fantasia || r.razaoSocial, "Nome");
+      fill("cep", r.cep ? formatCep(r.cep) : "", "CEP");
+      fill("uf", r.uf, "UF");
+      fill("city", r.city, "Cidade");
+      fill("neighborhood", r.neighborhood, "Bairro");
+      fill("street", r.street, "Rua");
+      fill("addressNumber", r.addressNumber, "Nº");
+      fill("complement", r.complement, "Complemento");
+      fill("mainActivity", r.cnae, "Atividade principal");
+      setForm((p) => ({ ...p, ...patch }));
+      const info = [r.razaoSocial, r.situation && `situação: ${r.situation}`, r.cnae && `atividade: ${r.cnae}`].filter(Boolean).join(" · ");
+      setLookupMsg("cnpj", "ok", `✓ ${info}. ${filled.length ? `Preenchido: ${filled.join(", ")}.` : "Os campos já preenchidos foram mantidos."}`);
+    } catch (e) {
+      setLookupMsg("cnpj", "error", e.message || "Não foi possível consultar o CNPJ.");
+    }
+  }
+
+  async function lookupCep(raw) {
+    const d = digitsOf(raw);
+    if (d.length !== 8) return setLookupMsg("cep", "error", "Digite os 8 números do CEP.");
+    lastLookup.current.cep = d;
+    setLookupMsg("cep", "loading", "Consultando o CEP…");
+    try {
+      const r = await fetchCepData(d);
+      r.city = await canonicalCity(r.uf, r.city);
+      const patch = { cep: formatCep(d) };
+      ["uf", "city", "neighborhood", "street"].forEach((k) => { if (r[k]) patch[k] = r[k]; });
+      setForm((p) => ({ ...p, ...patch }));
+      const where = [r.street, r.neighborhood, r.city && `${r.city}${r.uf ? " - " + r.uf : ""}`].filter(Boolean).join(", ");
+      setLookupMsg("cep", "ok", `✓ ${where || "CEP encontrado."}`);
+    } catch (e) {
+      setLookupMsg("cep", "error", e.message || "Não foi possível consultar o CEP.");
+    }
   }
 
   function addContactDraft() {
@@ -3760,11 +4390,18 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
       const ed = peopleEdits[p.id];
       return { ...p, ...ed, name: ed.name !== undefined && ed.name.trim() ? ed.name : p.name };
     });
-    onSubmit({ ...form, address }, contactDrafts, changedPeople);
+    onSubmit({ ...form, address, monthlyValue: parseMoney(form.monthlyValue) }, contactDrafts, changedPeople);
   }
 
   const f = (key) => (e) => setForm({ ...form, [key]: e.target.value });
-  const TABS = [["geral", "GERAL"], ["enderecos", "ENDEREÇOS"], ["contato", "CONTATO"]];
+  const TABS = [["geral", "GERAL"], ["enderecos", "ENDEREÇOS"], ["carteira", "CARTEIRA"], ["contato", "CONTATO"]];
+  const segmentCatalog = MODULES_BY_SEGMENT[form.segment];
+  const moduleOptions = Array.from(new Set([...(segmentCatalog || ALL_MODULES), ...(form.modules || [])]));
+  const opportunities = segmentCatalog ? segmentCatalog.filter((m) => !(form.modules || []).includes(m)) : null;
+  const toggleModule = (m) => setForm((p) => ({
+    ...p,
+    modules: (p.modules || []).includes(m) ? p.modules.filter((x) => x !== m) : [...(p.modules || []), m],
+  }));
 
   return (
     <div className="form-page">
@@ -3786,7 +4423,24 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
               <div className="edit-grid">
                 <label>Nome / Nome Fantasia *<input autoFocus value={form.name} onChange={f("name")} /></label>
                 <label>Razão Social<input value={form.razaoSocial} onChange={f("razaoSocial")} /></label>
-                <label>CNPJ<input placeholder="00.000.000/0000-00" value={form.cnpj} onChange={f("cnpj")} /></label>
+                <div className="field-with-lookup">
+                  <label>CNPJ
+                    <span className="input-with-btn">
+                      <input
+                        placeholder="00.000.000/0000-00" value={form.cnpj}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setForm({ ...form, cnpj: v });
+                          const d = digitsOf(v);
+                          if (d.length === 14 && d !== lastLookup.current.cnpj) lookupCnpj(v);
+                          else if (d.length !== 14) setLookupMsg("cnpj", null);
+                        }}
+                      />
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => lookupCnpj(form.cnpj)}>Buscar</button>
+                    </span>
+                  </label>
+                  {lookup.cnpj && <div className={`lookup-msg ${lookup.cnpj.status}`}>{lookup.cnpj.msg}</div>}
+                </div>
                 <label>O que ele é?
                   <select value={form.entityType} onChange={f("entityType")}>
                     <option value="">—</option>
@@ -3805,10 +4459,11 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
                     {ORIGINS.map((o) => <option key={o}>{o}</option>)}
                   </select>
                 </label>
-                <label>Atividade / Segmento<input list="segment-options" placeholder="Ex: Agronegócio…" value={form.segment} onChange={f("segment")} /></label>
+                <label>Segmento<input list="segment-options" placeholder="Ex: Mercado…" value={form.segment} onChange={f("segment")} /></label>
                 <datalist id="segment-options">
                   {SEGMENTS.map((s) => <option key={s} value={s} />)}
                 </datalist>
+                <label>Atividade principal<input placeholder="O que a empresa faz (ex: Comércio varejista de mercadorias em geral)" value={form.mainActivity} onChange={f("mainActivity")} /></label>
                 <label>Classificação do cliente
                   <select value={form.classification} onChange={f("classification")}>
                     <option value="">—</option>
@@ -3824,15 +4479,93 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson })
             <>
               <div className="form-page-section">ENDEREÇO</div>
               <div className="edit-grid">
-                <label>CEP<input value={form.cep} onChange={f("cep")} /></label>
-                <label>UF<input maxLength={2} placeholder="GO" value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value.toUpperCase() })} /></label>
-                <label>Cidade<input value={form.city} onChange={f("city")} /></label>
+                <div className="field-with-lookup">
+                  <label>CEP
+                    <span className="input-with-btn">
+                      <input
+                        value={form.cep}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setForm({ ...form, cep: v });
+                          const d = digitsOf(v);
+                          if (d.length === 8 && d !== lastLookup.current.cep) lookupCep(v);
+                          else if (d.length !== 8) setLookupMsg("cep", null);
+                        }}
+                      />
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => lookupCep(form.cep)}>Buscar</button>
+                    </span>
+                  </label>
+                  {lookup.cep && <div className={`lookup-msg ${lookup.cep.status}`}>{lookup.cep.msg}</div>}
+                </div>
+                <label>UF
+                  <select value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value, city: "" })}>
+                    <option value="">—</option>
+                    {UF_LIST.map(([u, n]) => <option key={u} value={u}>{u} - {n}</option>)}
+                    {form.uf && !UFS.includes(form.uf) && <option value={form.uf}>{form.uf}</option>}
+                  </select>
+                </label>
+                {cityStatus === "error" ? (
+                  <label>Cidade
+                    <input value={form.city} onChange={f("city")} placeholder="Digite a cidade" />
+                    <span className="field-hint">Não consegui carregar a lista de cidades. Digite o nome.</span>
+                  </label>
+                ) : (
+                  <label>Cidade
+                    <select value={form.city} onChange={f("city")} disabled={!form.uf}>
+                      <option value="">{!form.uf ? "Escolha a UF primeiro" : cityStatus === "loading" ? "Carregando…" : "—"}</option>
+                      {cityList.map((c) => <option key={c} value={c}>{c}</option>)}
+                      {form.city && !cityList.includes(form.city) && <option value={form.city}>{form.city}</option>}
+                    </select>
+                  </label>
+                )}
                 <label>Bairro<input value={form.neighborhood} onChange={f("neighborhood")} /></label>
                 <label>Rua<input value={form.street} onChange={f("street")} /></label>
                 <label>Nº<input value={form.addressNumber} onChange={f("addressNumber")} /></label>
               </div>
               <label>Complemento<input value={form.complement} onChange={f("complement")} /></label>
               <label>Localização (link do Google Maps, coordenadas ou referência de acesso)<input placeholder="Cole aqui o link do mapa" value={form.location} onChange={f("location")} /></label>
+            </>
+          )}
+
+          {tab === "carteira" && (
+            <>
+              <div className="form-page-section">CARTEIRA DO CLIENTE</div>
+              <div className="edit-grid">
+                <label>Cliente desde<input type="date" value={form.customerSince} onChange={f("customerSince")} /></label>
+                <label>Última compra<input type="date" value={form.lastPurchase} onChange={f("lastPurchase")} /></label>
+                <label>Valor mensal (R$)<input placeholder="Ex: 350,00" value={form.monthlyValue} onChange={f("monthlyValue")} /></label>
+                <label>Plano / solução contratada<input value={form.plan} onChange={f("plan")} /></label>
+                <label>Potencial
+                  <select value={form.potential} onChange={f("potential")}>
+                    <option value="">—</option>
+                    {POTENTIALS.map((p) => <option key={p}>{p}</option>)}
+                  </select>
+                </label>
+                <label>Status
+                  <select value={form.customerStatus} onChange={f("customerStatus")}>
+                    <option value="">—</option>
+                    {CUSTOMER_STATUSES.map((st) => <option key={st}>{st}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-page-section">MÓDULOS CONTRATADOS</div>
+              <div className="module-grid">
+                {moduleOptions.map((m) => (
+                  <label key={m} className="filter-check module-check">
+                    <input type="checkbox" checked={(form.modules || []).includes(m)} onChange={() => toggleModule(m)} /> {m}
+                  </label>
+                ))}
+              </div>
+              {segmentCatalog ? (
+                <div className="next-step-hint">
+                  Oportunidades em {form.segment} (módulos ainda não contratados): <b>{opportunities.length ? opportunities.join(", ") : "nenhuma, o cliente já usa todos"}</b>
+                </div>
+              ) : (
+                <div className="next-step-hint">
+                  {form.segment ? `A matriz de oportunidades de "${form.segment}" ainda não foi definida.` : "Escolha o segmento na guia Geral para ver as oportunidades."} Os módulos acima são uma lista geral.
+                </div>
+              )}
             </>
           )}
 
@@ -4347,6 +5080,9 @@ function Style() {
       .search-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
       .search-field { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; box-shadow: var(--shadow-card); color: var(--ink-soft); }
       .search-field input { border: none; outline: none; background: transparent; flex: 1; font-size: 14px; color: var(--ink); }
+      .type-visibility { display: flex; align-items: center; gap: 18px; margin-bottom: 10px; font-size: 13px; color: var(--ink-soft); }
+      .filter-check { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); cursor: pointer; }
+      .filter-check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
       .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
       .filter-btn { appearance: none; -webkit-appearance: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; text-align: center; text-align-last: center; color: var(--ink); box-shadow: var(--shadow-card); cursor: pointer; font-family: var(--sans); }
       .filter-btn:hover { border-color: var(--accent); }
@@ -4374,6 +5110,24 @@ function Style() {
       .history-kind.activity { background: var(--brand-blue-soft); color: var(--brand-blue); }
       .history-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink-soft); white-space: pre-line; }
       @media (max-width: 860px) { .history-item { grid-template-columns: 1fr; gap: 4px; } }
+      .input-with-btn { display: flex; gap: 6px; }
+      .input-with-btn input { flex: 1; min-width: 0; }
+      .lookup-msg { font-size: 11.5px; line-height: 1.4; margin: -4px 0 10px; }
+      .lookup-msg.ok { color: #1E6B41; }
+      .lookup-msg.error { color: var(--danger); }
+      .lookup-msg.loading { color: var(--ink-soft); }
+      .module-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; margin-bottom: 8px; }
+      .edit-form .module-check { flex-direction: row; align-items: center; margin-bottom: 0; font-size: 13px; color: var(--ink); font-weight: 600; }
+      .carteira-wrap { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow-card); overflow-x: auto; }
+      .carteira-table { width: 100%; border-collapse: collapse; min-width: 820px; }
+      .carteira-table th { background: #3A4152; color: #fff; font-size: 12.5px; font-weight: 600; padding: 11px 12px; text-align: left; white-space: nowrap; }
+      .carteira-table td { padding: 14px 12px; border-top: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+      .carteira-name { font-weight: 600; margin-bottom: 4px; }
+      .carteira-money { font-weight: 700; white-space: nowrap; }
+      .carteira-modules { max-width: 230px; line-height: 1.45; }
+      .carteira-opp { color: var(--next); font-weight: 600; }
+      .carteira-muted { color: var(--ink-soft); font-size: 12px; }
+      .carteira-sub { display: block; font-size: 11.5px; color: var(--ink-soft); }
       .modal-wide { width: 640px; }
       .import-block { margin-bottom: 14px; }
       .import-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
