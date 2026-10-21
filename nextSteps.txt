@@ -1,14 +1,3 @@
-- Troquei a linha: const INTERACTION_TYPES = ["WhatsApp", "Ligação", "Reunião", "Visita", "Demonstração", "E-mail", "Proposta", "Follow-up", "Observação"];
-  por: const INTERACTION_TYPES = [
-    "Demonstração",
-    "E-mail",
-    "Follow-up",
-    "Ligação",
-    "Observação",
-    "Proposta",
-    "Reunião",
-    "Visita",
-    "WhatsApp"
-];
+- Na linha do tempo dentro de cada tarefa (quando é clicada): Deve aparecer no topo a mais recente, e no início a mais antiga, e por padrão todas as linhas do tempo devem seguir essa lógica;
 
-- 
+- Dentro da seção de Tarefas, devemos manter filtros acima dos registros similar a tela de Empresas, além do que existem dentre esses filtros deve haver Data inicial e Data final;

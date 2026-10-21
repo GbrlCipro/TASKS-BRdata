@@ -60,8 +60,9 @@ const CLASSIFICATION_COLOR = { A: "#2F9E5C", B: "#5C7FA6", C: "#D9822B", D: "#D6
 // Carteira de clientes (Plano Comercial)
 const POTENTIALS = ["Alto", "Médio", "Baixo"];
 const POTENTIAL_COLOR = { Alto: "#2F9E5C", "Médio": "#C9A227", Baixo: "#8B93A7" };
-const CUSTOMER_STATUSES = ["Ativo", "Em risco", "Oportunidade"];
-const CUSTOMER_STATUS_COLOR = { Ativo: "#2F9E5C", "Em risco": "#D64545", Oportunidade: "#F08516" };
+const CUSTOMER_STATUSES = ["Ativo", "Em risco", "Oportunidade", "Inativo"];
+const CUSTOMER_STATUS_COLOR = { Ativo: "#2F9E5C", "Em risco": "#D64545", Oportunidade: "#F08516", Inativo: "#8B93A7" };
+const DATE_KEYS = ["customerSince", "contractEnd"]; // datas lidas das planilhas
 // Matriz de oportunidades por segmento (do Plano Comercial). Os demais segmentos ainda não têm matriz definida.
 const MODULES_BY_SEGMENT = {
   // Atacado e Varejo reúne o que o plano definia para Mercado e Pet Shop; Serviços, o de Oficina
@@ -69,17 +70,7 @@ const MODULES_BY_SEGMENT = {
   "Serviços": ["Ordem de serviço", "Estoque", "Financeiro", "Clientes", "Fornecedores", "Orçamento", "Controle de serviços"],
 };
 const ALL_MODULES = Array.from(new Set(Object.values(MODULES_BY_SEGMENT).flat()));
-const INTERACTION_TYPES = [
-    "Demonstração",
-    "E-mail",
-    "Follow-up",
-    "Ligação",
-    "Observação",
-    "Proposta",
-    "Reunião",
-    "Visita",
-    "WhatsApp"
-];
+const INTERACTION_TYPES = ["WhatsApp", "Ligação", "Reunião", "Visita", "Demonstração", "E-mail", "Proposta", "Follow-up", "Observação"];
 
 const STORAGE_KEY = "brdata-rotina-app-v1";
 
@@ -959,6 +950,8 @@ export default function App() {
       classification: form.classification || "",
       notes: form.notes || "",
       mainActivity: form.mainActivity !== undefined ? form.mainActivity : (current?.mainActivity || ""),
+      contractEnd: form.contractEnd !== undefined ? form.contractEnd : (current?.contractEnd || ""),
+      contractNumber: form.contractNumber !== undefined ? form.contractNumber : (current?.contractNumber || ""),
       customerSince: form.customerSince !== undefined ? form.customerSince : (current?.customerSince || ""),
       lastPurchase: form.lastPurchase !== undefined ? form.lastPurchase : (current?.lastPurchase || ""),
       plan: form.plan !== undefined ? form.plan : (current?.plan || ""),
@@ -1014,10 +1007,12 @@ export default function App() {
       classification: form.classification || "",
       notes: form.notes || "",
       mainActivity: form.mainActivity || "",
+      contractEnd: form.contractEnd || "", contractNumber: form.contractNumber || "",
+      lostReason: form.lostReason || "",
       customerSince: form.customerSince || "", lastPurchase: form.lastPurchase || "", plan: form.plan || "",
       monthlyValue: form.monthlyValue ?? null, modules: form.modules || [],
       potential: form.potential || "", customerStatus: form.customerStatus || "",
-      commercialSummary: "", lostReason: "",
+      commercialSummary: "",
     };
     update((d) => { d.companies = [...d.companies, company]; });
     window.db.insertCompany(company).catch(console.error);
@@ -2039,6 +2034,11 @@ const COMPANY_SHEET_COLUMNS = [
   { key: "notes", header: "Observações", width: 36 },
   { key: "commercialSummary", header: "Resumo Comercial", width: 36 },
   { key: "lostReason", header: "Motivo da perda", width: 28 },
+  { key: "customerSince", header: "Início do contrato", width: 18 },
+  { key: "contractEnd", header: "Fim do contrato", width: 16 },
+  { key: "contractNumber", header: "Número do contrato", width: 18 },
+  { key: "monthlyValue", header: "Valor mensal", width: 14 },
+  { key: "customerStatus", header: "Status", width: 14 },
 ];
 const COMPANY_SHEET_READONLY_HEADER = "Última tarefa/atividade (só consulta)";
 
@@ -2062,6 +2062,8 @@ async function exportCompaniesToExcel(companies, people, tasks, activities) {
     const last = lastInteraction(c.id, tasks, activities);
     const values = COMPANY_SHEET_COLUMNS.map((col) => {
       if (col.key === "street") return text(hasStructured ? c.street : c.address);
+      if (DATE_KEYS.includes(col.key)) return c[col.key] ? formatDateBR(c[col.key]) : "";
+      if (col.key === "monthlyValue") return c.monthlyValue == null ? "" : c.monthlyValue;
       return text(c[col.key]);
     });
     values.push(last ? `${formatDateBR(last.shownDate)} (${last.kind}): ${last.text}` : "");
@@ -2085,7 +2087,7 @@ async function exportCompaniesToExcel(companies, people, tasks, activities) {
   // aba Listas (valores aceitos nos campos de escolha)
   const lists = [
     ["Tipo", ENTITY_TYPES], ["Etapa do CRM", CRM_STAGES], ["Origem", ORIGINS],
-    ["Segmento", SEGMENTS], ["Classificação", CLASSIFICATIONS],
+    ["Segmento", SEGMENTS], ["Classificação", CLASSIFICATIONS], ["Status", CUSTOMER_STATUSES],
   ];
   const maxLen = Math.max(...lists.map(([, vals]) => vals.length));
   const listRows = Array.from({ length: maxLen }, (_, i) => lists.map(([, vals]) => vals[i] || ""));
@@ -2122,18 +2124,18 @@ function blankCompany(id, name) {
 }
 
 function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
-  const wb = XLSX.read(buffer, { type: "array" });
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true });
   const plan = {
     companyCreates: [], companyUpdates: [], companyUnchanged: 0,
     contactCreates: [], contactUpdates: [], contactUnchanged: 0,
     problems: [],
   };
   const problem = (sheet, row, message) => plan.problems.push({ sheet, row, message });
-  const cell = (v) => (v == null ? "" : String(v).trim());
+  const cell = (v) => (v == null ? "" : v instanceof Date ? v : typeof v === "number" ? String(v) : String(v).trim());
   const readSheet = (name) => {
     const real = wb.SheetNames.find((n) => normText(n) === normText(name));
     if (!real) return null;
-    return XLSX.utils.sheet_to_json(wb.Sheets[real], { header: 1, defval: "", raw: false });
+    return XLSX.utils.sheet_to_json(wb.Sheets[real], { header: 1, defval: "", raw: true });
   };
   const columnIndex = (rows, columns) => {
     const header = rows[0].map((h) => normText(cell(h)));
@@ -2184,11 +2186,23 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
           if (col.key === "id") return;
           let v = get(col.key);
           if (!v) return; // célula vazia nunca apaga o que já existe
+          if (DATE_KEYS.includes(col.key)) {
+            const d = parseDateCell(v);
+            if (!d) errors.push(`${col.header}: data inválida "${String(v)}" (use DD/MM/AAAA).`); else patch[col.key] = d;
+            return;
+          }
+          if (col.key === "monthlyValue") {
+            const n = parseMoney(v);
+            if (n == null || n < 0) errors.push(`${col.header}: não entendi "${String(v)}".`); else patch[col.key] = n;
+            return;
+          }
+          if (col.key === "cnpj" && /^\d{13}$/.test(v)) v = "0" + v; // o Excel come o zero da frente
+          if (col.key === "cep" && /^\d{7}$/.test(v)) v = "0" + v;
           if (["cnpj", "cep", "phone"].includes(col.key) && SCI_RE.test(v)) {
             errors.push(`${col.header}: o Excel converteu para número. Formate a coluna como Texto e digite de novo.`);
             return;
           }
-          const lists = { entityType: ENTITY_TYPES, crmStage: CRM_STAGES, origin: ORIGINS, classification: CLASSIFICATIONS };
+          const lists = { entityType: ENTITY_TYPES, crmStage: CRM_STAGES, origin: ORIGINS, classification: CLASSIFICATIONS, customerStatus: CUSTOMER_STATUSES };
           if (lists[col.key]) {
             const m = matchChoice(v, lists[col.key]);
             if (!m) { errors.push(`${col.header} "${v}" não é um valor válido (veja a aba Listas).`); return; }
@@ -2598,7 +2612,7 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                 {(contact || c.address || c.phone) && (
                   <div className="entity-contact">
                     {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
-                    {c.phone && <span><Phone size={11} /> {c.phone}</span>}
+                    {c.phone && <span><Phone size={11} /> <PhoneLink phone={c.phone} /></span>}
                     {c.address && <span><MapPin size={11} /> {c.address}</span>}
                   </div>
                 )}
@@ -2807,20 +2821,23 @@ const CARTEIRA_SHEET_COLUMNS = [
   { key: "id", header: "ID", width: 24 },
   { key: "name", header: "Cliente", width: 32 },
   { key: "segment", header: "Segmento", width: 24 },
-  { key: "customerSince", header: "Cliente desde", width: 16 },
+  { key: "customerSince", header: "Início do contrato", aliases: ["Cliente desde"], width: 18 },
+  { key: "contractEnd", header: "Fim do contrato", width: 16 },
+  { key: "contractNumber", header: "Número do contrato", width: 18 },
   { key: "plan", header: "Plano contratado", width: 26 },
   { key: "monthlyValue", header: "Valor mensal", width: 14 },
   { key: "modules", header: "Módulos contratados", width: 42 },
   { key: "lastPurchase", header: "Última compra", width: 16 },
   { key: "potential", header: "Potencial", width: 12 },
   { key: "customerStatus", header: "Status", width: 14 },
+  { key: "lostReason", header: "Motivo da perda", width: 32 },
 ];
-const CARTEIRA_READONLY_HEADERS = ["Tempo de cliente (só consulta)", "Módulos não contratados (só consulta)", "Último contato (só consulta)"];
+const CARTEIRA_READONLY_HEADERS = ["Tempo de contrato (só consulta)", "Módulos não contratados (só consulta)", "Último contato (só consulta)"];
 
-async function exportCarteiraToExcel(companies, activities, includeEx) {
+async function exportCarteiraToExcel(companies, activities, includeClients, includeEx) {
   const XLSX = await import("xlsx");
   const list = companies
-    .filter((c) => c.entityType === "Cliente" || (includeEx && c.entityType === "Ex-cliente"))
+    .filter((c) => (includeClients && c.entityType === "Cliente") || (includeEx && c.entityType === "Ex-cliente"))
     .sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
   const rows = list.map((c) => {
     const modules = c.modules || [];
@@ -2828,10 +2845,12 @@ async function exportCarteiraToExcel(companies, activities, includeEx) {
     const lc = lastContactDate(c.id, activities);
     return [
       c.id, c.name || "", c.segment || "",
-      c.customerSince ? formatDateBR(c.customerSince) : "", c.plan || "",
+      c.customerSince ? formatDateBR(c.customerSince) : "",
+      c.contractEnd ? formatDateBR(c.contractEnd) : "",
+      c.contractNumber || "", c.plan || "",
       c.monthlyValue == null ? "" : c.monthlyValue,
       modules.join("; "), c.lastPurchase ? formatDateBR(c.lastPurchase) : "",
-      c.potential || "", c.customerStatus || "",
+      c.potential || "", c.customerStatus || "", c.lostReason || "",
       c.customerSince ? customerTenure(c.customerSince) : "",
       catalog ? catalog.filter((m) => !modules.includes(m)).join("; ") : "",
       lc ? formatDateBR(lc) : "",
@@ -2904,7 +2923,11 @@ function parseCarteiraWorkbook(XLSX, buffer, companies) {
 
   const header = rows[0].map((h) => normText(String(h == null ? "" : h)));
   const idx = {};
-  CARTEIRA_SHEET_COLUMNS.forEach((col) => { const i = header.indexOf(normText(col.header)); if (i >= 0) idx[col.key] = i; });
+  CARTEIRA_SHEET_COLUMNS.forEach((col) => {
+    const names = [col.header, ...(col.aliases || [])].map(normText);
+    const i = header.findIndex((h) => names.includes(h));
+    if (i >= 0) idx[col.key] = i;
+  });
   if (idx.id === undefined && idx.name === undefined) {
     problem(1, 'Não encontrei as colunas "ID" nem "Cliente".');
     return plan;
@@ -2933,9 +2956,9 @@ function parseCarteiraWorkbook(XLSX, buffer, companies) {
     const errors = [];
     const seg = text(r, "segment");
     if (seg) patch.segment = matchChoice(seg, SEGMENTS) || seg;
-    if (text(r, "plan")) patch.plan = text(r, "plan");
+    ["plan", "contractNumber", "lostReason"].forEach((key) => { if (text(r, key)) patch[key] = text(r, key); });
 
-    [["customerSince", "Cliente desde"], ["lastPurchase", "Última compra"]].forEach(([key, label]) => {
+    [["customerSince", "Início do contrato"], ["contractEnd", "Fim do contrato"], ["lastPurchase", "Última compra"]].forEach(([key, label]) => {
       const v = raw(r, key);
       if (isEmpty(v)) return;
       const d = parseDateCell(v);
@@ -2999,10 +3022,11 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
   const [statusFilter, setStatusFilter] = usePersistedState("carteira-status", "Todos");
   const [sortBy, setSortBy] = usePersistedState("carteira-sort", "name");
   const [showEx, setShowEx] = usePersistedState("carteira-show-ex", "0");
+  const [showCli, setShowCli] = usePersistedState("carteira-show-clients", "1");
 
   async function handleExport() {
     try {
-      await exportCarteiraToExcel(companies, activities, showEx === "1");
+      await exportCarteiraToExcel(companies, activities, showCli === "1", showEx === "1");
     } catch (e) {
       console.error(e);
       alert("Não foi possível gerar o Excel. Confirme que a biblioteca foi instalada (npm install) e reinicie o npm run dev.");
@@ -3022,7 +3046,7 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
     }
   }
 
-  const base = companies.filter((c) => c.entityType === "Cliente" || (showEx === "1" && c.entityType === "Ex-cliente"));
+  const base = companies.filter((c) => (showCli === "1" && c.entityType === "Cliente") || (showEx === "1" && c.entityType === "Ex-cliente"));
   const segmentOptions = Array.from(new Set([
     ...SEGMENTS, ...base.map((c) => c.segment).filter(Boolean), ...(segmentFilter !== "Todos" ? [segmentFilter] : []),
   ])).sort((x, y) => x.localeCompare(y, "pt-BR"));
@@ -3049,7 +3073,6 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
   };
   rows = [...rows].sort(sorters[sortBy] || sorters.name);
 
-  const total = rows.reduce((sum, r) => sum + (r.c.monthlyValue || 0), 0);
   const atRisk = rows.filter((r) => r.c.customerStatus === "Em risco").length;
   const withOpp = rows.filter((r) => r.opportunities && r.opportunities.length > 0).length;
 
@@ -3069,7 +3092,6 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
 
       <div className="stat-grid">
         <div className="stat-card"><div className="stat-value">{rows.length}</div><div className="stat-label">Clientes</div></div>
-        <div className="stat-card tone-success"><div className="stat-value">{formatMoney(total)}</div><div className="stat-label">Receita mensal</div></div>
         <div className="stat-card tone-danger"><div className="stat-value">{atRisk}</div><div className="stat-label">Em risco</div></div>
         <div className="stat-card tone-next"><div className="stat-value">{withOpp}</div><div className="stat-label">Com oportunidade de venda</div></div>
       </div>
@@ -3077,7 +3099,8 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
       <div className="search-row">
         <div className="search-field"><Search size={16} /><input placeholder="pesquisar cliente…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <div className="type-visibility">
-          <label className="filter-check"><input type="checkbox" checked={showEx === "1"} onChange={(e) => setShowEx(e.target.checked ? "1" : "0")} /> Incluir ex-clientes</label>
+          <label className="filter-check"><input type="checkbox" checked={showCli === "1"} onChange={(e) => setShowCli(e.target.checked ? "1" : "0")} /> Exibir clientes</label>
+          <label className="filter-check"><input type="checkbox" checked={showEx === "1"} onChange={(e) => setShowEx(e.target.checked ? "1" : "0")} /> Exibir ex-clientes</label>
         </div>
       </div>
 
@@ -3090,7 +3113,7 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
           <select className="filter-btn" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
             <option value="name">Nome (A-Z)</option>
             <option value="value">Maior valor mensal</option>
-            <option value="tenure">Cliente há mais tempo</option>
+            <option value="tenure">Contrato mais antigo</option>
             <option value="contact">Sem contato há mais tempo</option>
           </select>
         </label>
@@ -3100,7 +3123,7 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
         <table className="carteira-table">
           <thead>
             <tr>
-              <th>Cliente</th><th>Segmento</th><th>Tempo de cliente</th><th>Último contato</th><th>Status</th><th />
+              <th>Cliente</th><th>Segmento</th><th>Início do contrato</th><th>Último contato</th><th>Status</th><th />
             </tr>
           </thead>
           <tbody>
@@ -3108,7 +3131,11 @@ function CarteiraView({ companies, activities, onEditCarteira, onOpenCompany, on
               <tr key={c.id}>
                 <td><div className="carteira-name">{c.name}</div><EntityTypeBadge type={c.entityType} /></td>
                 <td>{c.segment || "—"}</td>
-                <td>{c.customerSince ? customerTenure(c.customerSince) : "—"}</td>
+                <td>
+                  {c.customerSince
+                    ? <>{formatDateBR(c.customerSince)}<span className="carteira-sub">{c.contractEnd ? `até ${formatDateBR(c.contractEnd)}` : customerTenure(c.customerSince)}</span></>
+                    : "—"}
+                </td>
                 <td>
                   {lastContact
                     ? <>{formatDateBR(lastContact)}<span className="carteira-sub">há {daysSince(lastContact)} dia(s)</span></>
@@ -3162,7 +3189,7 @@ function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
       key: "t_" + t.id, kind: upcoming ? "Próxima tarefa" : "Tarefa", task: t,
       date: upcoming ? t.dueDate : (t.createdAt || "").split(" ")[0],
       sort: upcoming ? `${t.dueDate} ${t.dueTime || "00:00"}` : (t.createdAt || ""),
-      title: t.title, desc: t.description,
+      title: t.title, desc: t.description, exec: t.completionNote, notes: t.notes,
       chips: [t.category, person && person.name].filter(Boolean),
     });
   });
@@ -3196,6 +3223,8 @@ function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
                 {it.task && <StatusPill status={it.task.status} />}
               </div>
               {it.desc && <div className="history-desc">{it.desc}</div>}
+              {it.exec && <div className="history-desc"><b>Execução:</b> {it.exec}</div>}
+              {it.notes && <div className="history-desc"><b>Observações:</b> {it.notes}</div>}
               {it.chips.length > 0 && <div className="task-row-meta">{it.chips.map((c, i) => <span key={i} className="meta-chip">{c}</span>)}</div>}
             </div>
           </div>
@@ -3240,7 +3269,7 @@ function PeopleView({ people, companies, tasks, activities, onNew, onEdit, onSel
               {(p.email || p.phone) && (
                 <div className="entity-contact">
                   {p.email && <span>{p.email}</span>}
-                  {p.phone && <span>{p.phone}</span>}
+                  {p.phone && <span><PhoneLink phone={p.phone} /></span>}
                 </div>
               )}
             </div>
@@ -3345,15 +3374,21 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
         </div>
       )}
 
-      {isCompany && (entity.plan || entity.monthlyValue != null || entity.customerSince || entity.potential || entity.customerStatus || (entity.modules || []).length > 0) && (
+      {isCompany && (entity.plan || entity.monthlyValue != null || entity.customerSince || entity.contractEnd || entity.contractNumber || entity.potential || entity.customerStatus || (entity.modules || []).length > 0) && (
         <div className="profile-crm-row">
           {entity.customerStatus && <ColorBadge label={entity.customerStatus} color={CUSTOMER_STATUS_COLOR[entity.customerStatus]} />}
           {entity.potential && <ColorBadge label={`Potencial ${entity.potential}`} color={POTENTIAL_COLOR[entity.potential]} />}
           {entity.plan && <span className="meta-chip">{entity.plan}</span>}
           {entity.monthlyValue != null && <span className="meta-chip">{formatMoney(entity.monthlyValue)}/mês</span>}
-          {entity.customerSince && <span className="meta-chip">Cliente há {customerTenure(entity.customerSince)}</span>}
+          {entity.contractNumber && <span className="meta-chip">Contrato nº {entity.contractNumber}</span>}
+          {entity.customerSince && <span className="meta-chip">Início do contrato: {formatDateBR(entity.customerSince)}</span>}
+          {entity.contractEnd && <span className="meta-chip">Fim do contrato: {formatDateBR(entity.contractEnd)}</span>}
           {(entity.modules || []).length > 0 && <span className="meta-chip">{entity.modules.length} módulo(s): {entity.modules.join(", ")}</span>}
         </div>
+      )}
+
+      {isCompany && entity.lostReason && (
+        <div className="notes-box"><b>Motivo da perda:</b>&nbsp;{entity.lostReason}</div>
       )}
 
       {isCompany && (
@@ -3373,7 +3408,7 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
       {!isCompany && (entity.email || entity.phone) && (
         <div className="profile-contact-row">
           {entity.email && <span><Mail size={12} /> {entity.email}</span>}
-          {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
+          {entity.phone && <span><Phone size={12} /> <PhoneLink phone={entity.phone} /></span>}
         </div>
       )}
       {isCompany && (entity.razaoSocial || entity.cnpj || entity.mainActivity) && (
@@ -3385,7 +3420,7 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
       )}
       {isCompany && (entity.phone || entity.address || entity.location) && (
         <div className="profile-contact-row">
-          {entity.phone && <span><Phone size={12} /> {entity.phone}</span>}
+          {entity.phone && <span><Phone size={12} /> <PhoneLink phone={entity.phone} /></span>}
           {entity.address && <span><MapPin size={12} /> {entity.address}</span>}
           {entity.location && <span><a href={entity.location} target="_blank" rel="noreferrer">Ver localização</a></span>}
         </div>
@@ -4210,6 +4245,19 @@ function isValidCnpj(d) {
   return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
 }
 
+// telefone com 10 ou 11 dígitos recebe o 55 do Brasil; já com 12 ou 13 segue como está
+function whatsappUrl(phone) {
+  let d = digitsOf(phone);
+  if (d.length < 10) return null;
+  if (d.length <= 11) d = "55" + d;
+  return `https://wa.me/${d}`;
+}
+function PhoneLink({ phone }) {
+  const url = whatsappUrl(phone);
+  if (!url) return <>{phone}</>;
+  return <a className="phone-link" href={url} target="_blank" rel="noreferrer" title="Abrir no WhatsApp" onClick={(e) => e.stopPropagation()}>{phone}</a>;
+}
+
 const UF_LIST = [["AC", "Acre"], ["AL", "Alagoas"], ["AP", "Amapá"], ["AM", "Amazonas"], ["BA", "Bahia"], ["CE", "Ceará"],
   ["DF", "Distrito Federal"], ["ES", "Espírito Santo"], ["GO", "Goiás"], ["MA", "Maranhão"], ["MT", "Mato Grosso"],
   ["MS", "Mato Grosso do Sul"], ["MG", "Minas Gerais"], ["PA", "Pará"], ["PB", "Paraíba"], ["PR", "Paraná"],
@@ -4305,6 +4353,7 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, i
     classification: editing?.classification || "",
     notes: editing?.notes || "",
     customerSince: editing?.customerSince || "", lastPurchase: editing?.lastPurchase || "",
+    contractEnd: editing?.contractEnd || "", contractNumber: editing?.contractNumber || "", lostReason: editing?.lostReason || "",
     monthlyValue: editing?.monthlyValue != null ? String(editing.monthlyValue).replace(".", ",") : "",
     plan: editing?.plan || "", potential: editing?.potential || "", customerStatus: editing?.customerStatus || "",
     modules: Array.isArray(editing?.modules) ? editing.modules : [],
@@ -4539,12 +4588,14 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, i
 
           {tab === "carteira" && (
             <>
-              <div className="form-page-section">CARTEIRA DO CLIENTE</div>
+              <div className="form-page-section">CONTRATO E CARTEIRA</div>
               <div className="edit-grid">
-                <label>Cliente desde<input type="date" value={form.customerSince} onChange={f("customerSince")} /></label>
-                <label>Última compra<input type="date" value={form.lastPurchase} onChange={f("lastPurchase")} /></label>
-                <label>Valor mensal (R$)<input placeholder="Ex: 350,00" value={form.monthlyValue} onChange={f("monthlyValue")} /></label>
+                <label>Início do contrato<input type="date" value={form.customerSince} onChange={f("customerSince")} /></label>
+                <label>Fim do contrato<input type="date" value={form.contractEnd} onChange={f("contractEnd")} /></label>
+                <label>Número do contrato<input value={form.contractNumber} onChange={f("contractNumber")} /></label>
+                <label>Valor mensal / mensalidade (R$)<input placeholder="Ex: 350,00" value={form.monthlyValue} onChange={f("monthlyValue")} /></label>
                 <label>Plano / solução contratada<input value={form.plan} onChange={f("plan")} /></label>
+                <label>Última compra<input type="date" value={form.lastPurchase} onChange={f("lastPurchase")} /></label>
                 <label>Potencial
                   <select value={form.potential} onChange={f("potential")}>
                     <option value="">—</option>
@@ -4554,10 +4605,13 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, i
                 <label>Status
                   <select value={form.customerStatus} onChange={f("customerStatus")}>
                     <option value="">—</option>
-                    {CUSTOMER_STATUSES.map((st) => <option key={st}>{st}</option>)}
+                    {CUSTOMER_STATUSES.filter((st) => st !== "Inativo" || form.entityType === "Ex-cliente" || form.customerStatus === "Inativo").map((st) => <option key={st}>{st}</option>)}
                   </select>
                 </label>
               </div>
+              {(form.entityType === "Ex-cliente" || form.lostReason) && (
+                <label>Motivo da perda<textarea rows={3} value={form.lostReason} onChange={f("lostReason")} placeholder="Por que o cliente saiu?" /></label>
+              )}
 
               <div className="form-page-section">MÓDULOS CONTRATADOS</div>
               <div className="module-grid">
@@ -4603,12 +4657,16 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, i
                   <input value={personValue(p, "role")} onChange={(e) => editPerson(p, "role", e.target.value)} placeholder="Cargo / função" />
                   <input value={personValue(p, "phone")} onChange={(e) => editPerson(p, "phone", e.target.value)} placeholder="Telefone / WhatsApp" />
                   <input value={personValue(p, "email")} onChange={(e) => editPerson(p, "email", e.target.value)} placeholder="E-mail" />
-                  <span />
+                  <span>
+                    {whatsappUrl(personValue(p, "phone")) && (
+                      <a className="icon-btn" href={whatsappUrl(personValue(p, "phone"))} target="_blank" rel="noreferrer" title="Abrir no WhatsApp"><MessageCircle size={14} /></a>
+                    )}
+                  </span>
                 </div>
               ))}
               {contactDrafts.map((c, i) => (
                 <div key={i} className="contact-row draft">
-                  <b>{c.name}</b><span>{c.role}</span><span>{c.phone}</span><span>{c.email}</span>
+                  <b>{c.name}</b><span>{c.role}</span><span><PhoneLink phone={c.phone} /></span><span>{c.email}</span>
                   <X size={14} onClick={() => setContactDrafts((d) => d.filter((_, j) => j !== i))} />
                 </div>
               ))}
@@ -5118,7 +5176,7 @@ function Style() {
       .history-kind { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
       .history-kind.task { background: var(--accent-soft); color: var(--accent); }
       .history-kind.activity { background: var(--brand-blue-soft); color: var(--brand-blue); }
-      .history-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink-soft); white-space: pre-line; }
+      .history-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink); white-space: pre-line; }
       @media (max-width: 860px) { .history-item { grid-template-columns: 1fr; gap: 4px; } }
       .input-with-btn { display: flex; gap: 6px; }
       .input-with-btn input { flex: 1; min-width: 0; }
@@ -5138,6 +5196,8 @@ function Style() {
       .carteira-opp { color: var(--next); font-weight: 600; }
       .carteira-muted { color: var(--ink-soft); font-size: 12px; }
       .carteira-sub { display: block; font-size: 11.5px; color: var(--ink-soft); }
+      .phone-link { color: inherit; text-decoration: underline; text-decoration-color: #25D366; text-underline-offset: 2px; }
+      .phone-link:hover { color: #1DA851; }
       .modal-wide { width: 640px; }
       .import-block { margin-bottom: 14px; }
       .import-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
