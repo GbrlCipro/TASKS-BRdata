@@ -1,3 +1,9 @@
-- Na linha do tempo dentro de cada tarefa (quando é clicada): Deve aparecer no topo a mais recente, e no início a mais antiga, e por padrão todas as linhas do tempo devem seguir essa lógica;
+- Dentro de EMPRESAS: O contato some da tela de informações da empresa quando transformo o contato antigo em contato normal...
 
-- Dentro da seção de Tarefas, devemos manter filtros acima dos registros similar a tela de Empresas, além do que existem dentre esses filtros deve haver Data inicial e Data final;
+- Gostaria que eliminasse o recurso "Numero de telefone antigo", e deixássemos todos os contatos no lugar de contatos normais mesmo (e mantem o link pra abrir whatsapp);
+
+- Em Contatos, é legal que criemos uma lista com o que a pessoa é na empresa (Proprietário(a), Colaborador, Indicador, etc etc etc);
+
+- Colocar o olho verde dentro da tela de empresa ao lado do lápis;
+
+- 

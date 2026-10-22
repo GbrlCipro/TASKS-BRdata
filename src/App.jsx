@@ -123,6 +123,13 @@ function formatDateShortBR(str) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
 }
 
+// "2026-10-14 10:30" -> "14/10/2026 10:30" (data e hora no padrão brasileiro)
+function formatTsBR(ts) {
+  if (!ts) return "";
+  const [d, t] = ts.split(" ");
+  return `${formatDateBR(d)}${t ? " " + t : ""}`;
+}
+
 function nowTs() {
   const d = new Date();
   return `${toDateStr(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -1728,6 +1735,10 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
   const [priority, setPriority] = usePersistedState("tasks-priority", "Todas");
   const [category, setCategory] = usePersistedState("tasks-category", "Todas");
   const [q, setQ] = useState("");
+  const [qWho, setQWho] = useState(""); // pesquisa por empresa ou pessoa
+  const [dateKind, setDateKind] = usePersistedState("tasks-date-kind", "prazo");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkCategoryPick, setBulkCategoryPick] = useState("");
@@ -1747,7 +1758,33 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
     const lq = q.toLowerCase();
     filtered = filtered.filter((t) => t.title.toLowerCase().includes(lq) || (t.notes || "").toLowerCase().includes(lq));
   }
+  if (qWho.trim()) {
+    const lq = normText(qWho);
+    filtered = filtered.filter((t) =>
+      normText(companies.find((c) => c.id === t.companyId)?.name).includes(lq) ||
+      normText(people.find((p) => p.id === t.personId)?.name).includes(lq)
+    );
+  }
+  if (dateFrom || dateTo) {
+    const dayOf = {
+      prazo: (t) => t.dueDate || "",
+      criacao: (t) => (t.createdAt || "").split(" ")[0],
+      conclusao: (t) => (t.completedAt || "").split(" ")[0],
+    }[dateKind] || ((t) => t.dueDate || "");
+    filtered = filtered.filter((t) => {
+      const d = dayOf(t);
+      if (!d) return false; // sem a data escolhida: fica de fora quando há período
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+  }
   filtered = sortTasks(filtered, sortBy);
+
+  function clearTaskFilters() {
+    setStatus("abertas"); setPriority("Todas"); setCategory("Todas");
+    setQ(""); setQWho(""); setDateFrom(""); setDateTo("");
+  }
 
   const companyName = companyFilter ? companies.find((c) => c.id === companyFilter)?.name : null;
   const personName = personFilter ? people.find((p) => p.id === personFilter)?.name : null;
@@ -1785,30 +1822,51 @@ function TasksView({ tasks, categories, companies, people, companyFilter, person
         </div>
       </div>
 
-      <div className="filters-bar">
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="abertas">Abertas</option>
-          <option value="atrasadas">Atrasadas</option>
-          <option value="hoje">Hoje</option>
-          <option value="concluidas">Concluídas</option>
-          <option value="todas">Todas</option>
-        </select>
-        <select value={priority} onChange={(e) => setPriority(e.target.value)}>
-          <option>Todas</option>
-          {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-        </select>
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option>Todas</option>
-          {categories.map((c) => <option key={c}>{c}</option>)}
-        </select>
-        <input className="filters-search" placeholder="Buscar por título/observações…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
-          <option value="date">Prazo (mais próximo)</option>
-          <option value="date_desc">Prazo (mais distante)</option>
-          <option value="title">Nome (A-Z)</option>
-          <option value="priority">Prioridade (maior primeiro)</option>
-          <option value="created">Criação (mais recente)</option>
-        </select>
+      <div className="search-row">
+        <div className="search-field"><Search size={16} /><input placeholder="pesquisar por título ou observações…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="search-field"><Search size={16} /><input placeholder="pesquisar empresa ou pessoa…" value={qWho} onChange={(e) => setQWho(e.target.value)} /></div>
+      </div>
+
+      <div className="filter-grid">
+        <label className="filter-field">
+          <span className="filter-field-label">Status</span>
+          <select className={`filter-btn ${status !== "todas" ? "active" : ""}`} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="abertas">Abertas</option>
+            <option value="atrasadas">Atrasadas</option>
+            <option value="hoje">Hoje</option>
+            <option value="concluidas">Concluídas</option>
+            <option value="todas">Todos</option>
+          </select>
+        </label>
+        <FilterSelect label="Filtrar por prioridade" value={priority} onChange={setPriority} options={PRIORITIES} allValue="Todas" />
+        <FilterSelect label="Filtrar por categoria" value={category} onChange={setCategory} options={categories} allValue="Todas" />
+        <label className="filter-field">
+          <span className="filter-field-label">Data de</span>
+          <select className="filter-btn" value={dateKind} onChange={(e) => setDateKind(e.target.value)} title="Qual data o período abaixo considera">
+            <option value="prazo">Prazo</option>
+            <option value="criacao">Criação</option>
+            <option value="conclusao">Conclusão</option>
+          </select>
+        </label>
+        <label className="filter-field no-chevron">
+          <span className="filter-field-label">Data inicial</span>
+          <input type="date" className={`filter-btn ${dateFrom ? "active" : ""}`} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        </label>
+        <label className="filter-field no-chevron">
+          <span className="filter-field-label">Data final</span>
+          <input type="date" className={`filter-btn ${dateTo ? "active" : ""}`} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </label>
+        <label className="filter-field">
+          <span className="filter-field-label">Ordenar</span>
+          <select className="filter-btn" value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Ordenar por">
+            <option value="date">Prazo (mais próximo)</option>
+            <option value="date_desc">Prazo (mais distante)</option>
+            <option value="title">Nome (A-Z)</option>
+            <option value="priority">Prioridade (maior primeiro)</option>
+            <option value="created">Criação (mais recente)</option>
+          </select>
+        </label>
+        <button type="button" className="filter-btn" onClick={clearTaskFilters}>Limpar filtros</button>
       </div>
 
       {bulkMode && (
@@ -1918,7 +1976,7 @@ function ActivitiesView({ activities, companies, people, tasks, companyFilter, p
                     {a.interactionType && <span className="meta-chip"><MessageCircle size={11} /> {a.interactionType}</span>}
                     {company && <span className="meta-chip">{company.name}</span>}
                     {person && <span className="meta-chip">{person.name}</span>}
-                    <span className="meta-chip"><Clock size={11} /> {a.createdAt}</span>
+                    <span className="meta-chip"><Clock size={11} /> {formatTsBR(a.createdAt)}</span>
                   </div>
                 </div>
                 <div className="activity-card-actions">
@@ -3339,12 +3397,14 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
   const overdueCount = entityTasks.filter(isOverdue).length;
 
   const timelineEvents = [];
-  entityActivities.forEach((a) => timelineEvents.push({ date: a.createdAt, kind: "activity", data: a }));
-  entityTasks.forEach((t) => {
-    timelineEvents.push({ date: t.createdAt, kind: "task-created", data: t });
-    if (t.completedAt) timelineEvents.push({ date: t.completedAt, kind: "task-completed", data: t });
-  });
-  timelineEvents.sort((a, b) => b.date.localeCompare(a.date));
+  entityActivities.forEach((a) => timelineEvents.push({
+    key: "a_" + a.id, kind: "activity", date: a.createdAt || "", title: a.title, desc: a.description, interaction: a.interactionType, data: a,
+  }));
+  entityTasks.forEach((t) => timelineEvents.push({
+    key: "t_" + t.id, kind: "task", date: t.createdAt || "", title: t.title, desc: t.description,
+    exec: t.completionNote, done: t.status === "Concluída", data: t,
+  }));
+  timelineEvents.sort((a, b) => b.date.localeCompare(a.date)); // criação mais recente primeiro
 
   return (
     <div className="view profile-view">
@@ -3470,20 +3530,19 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
       <div className="drawer-section-title">Linha do tempo</div>
       <div className="timeline profile-timeline">
         {timelineEvents.length === 0 && <div className="side-empty">Nada registrado ainda.</div>}
-        {timelineEvents.map((ev, i) => (
-          <div key={i} className={`timeline-item ${ev.kind === "task-completed" ? "completed" : ""}`}>
+        {timelineEvents.map((ev) => (
+          <div key={ev.key} className={`timeline-item ${ev.done ? "completed" : ""}`}>
             <div className="timeline-dot" />
             <div className="timeline-content">
-              <div className="timeline-ts">{ev.date}</div>
-              {ev.kind === "activity" && (
-                <div className="timeline-text">{ev.data.interactionType ? `${ev.data.interactionType}: ` : "Atividade: "}{ev.data.title}</div>
-              )}
-              {ev.kind === "task-created" && (
-                <div className="timeline-text timeline-clickable" onClick={() => onOpenTask(ev.data)}>Tarefa criada: {ev.data.title}</div>
-              )}
-              {ev.kind === "task-completed" && (
-                <div className="timeline-text timeline-clickable" onClick={() => onOpenTask(ev.data)}>Tarefa concluída: {ev.data.title}</div>
-              )}
+              <div
+                className={`timeline-title ${ev.kind === "task" ? "timeline-clickable" : ""}`}
+                onClick={ev.kind === "task" ? () => onOpenTask(ev.data) : undefined}
+              >{ev.title}</div>
+              <div className="timeline-ts">
+                {formatTsBR(ev.date)} · {ev.kind === "task" ? "Tarefa" : `Atividade${ev.interaction ? ` (${ev.interaction})` : ""}`}
+              </div>
+              {ev.desc && <div className="timeline-desc">{ev.desc}</div>}
+              {ev.exec && <div className="timeline-desc"><b>Execução:</b> {ev.exec}</div>}
             </div>
           </div>
         ))}
@@ -3916,7 +3975,7 @@ function TaskDetail({ task, allTasks, activities, companies, people, categories,
               <div key={h.id} className="timeline-item">
                 <div className="timeline-dot" />
                 <div className="timeline-content">
-                  <div className="timeline-ts">{h.ts}</div>
+                  <div className="timeline-ts">{formatTsBR(h.ts)}</div>
                   <div className="timeline-text">{h.text}</div>
                 </div>
               </div>
@@ -5158,6 +5217,9 @@ function Style() {
       .filter-field { position: relative; display: block; }
       .filter-field-label { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); pointer-events: none; z-index: 1; }
       .filter-field::after { content: "▾"; position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--ink-soft); pointer-events: none; }
+      .filter-field.no-chevron::after { display: none; }
+      .filter-field.no-chevron .filter-btn { padding-right: 14px; }
+      input.filter-btn { font-family: var(--sans); }
       .filter-field .filter-btn { width: 100%; padding-left: 150px; padding-right: 32px; text-align: center; text-align-last: center; text-transform: none; letter-spacing: 0; font-size: 13px; }
       @media (max-width: 860px) {
         .search-row, .filter-grid { grid-template-columns: 1fr; }
@@ -5369,6 +5431,8 @@ function Style() {
       .profile-stats { margin-bottom: 18px; }
       .profile-people { margin-bottom: 18px; }
       .profile-people-list { display: flex; flex-wrap: wrap; gap: 6px; }
+      .timeline-title { font-weight: 600; font-size: 13.5px; }
+      .timeline-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; white-space: pre-line; }
       .timeline-clickable { cursor: pointer; }
       .timeline-clickable:hover { text-decoration: underline; color: var(--accent); }
       .timeline-item.completed .timeline-dot { background: #2F9E5C; }
