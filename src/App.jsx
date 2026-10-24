@@ -472,6 +472,7 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState(null); // { kind, id, label }
   const [theme, setTheme] = useState(() => getThemePref());
   const recurringChecked = useRef(false);
+  const phonesMigrated = useRef(false);
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
 
@@ -527,6 +528,14 @@ export default function App() {
     if (!loaded || !data || recurringChecked.current) return;
     recurringChecked.current = true;
     ensureRecurringInstances();
+    // eslint-disable-next-line
+  }, [loaded, data]);
+
+  // telefones do cadastro antigo da empresa viram contatos normais (idempotente: depois de convertido, o campo antigo fica vazio)
+  useEffect(() => {
+    if (!loaded || !data || phonesMigrated.current) return;
+    phonesMigrated.current = true;
+    migrateLegacyPhones(data);
     // eslint-disable-next-line
   }, [loaded, data]);
 
@@ -994,6 +1003,17 @@ export default function App() {
     plan.companyUpdates.forEach(({ id, patch }) => patchCompanyField(id, patch));
     plan.contactUpdates.forEach(({ id, person }) => patchPerson(id, person));
     plan.contactCreates.forEach(({ data }) => addPersonFull(data));
+  }
+
+  function migrateLegacyPhones(snapshot) {
+    snapshot.companies.forEach((c) => {
+      const phone = (c.phone || "").trim();
+      if (!phone) return;
+      const dg = digitsOf(phone);
+      const already = snapshot.people.some((x) => x.companyId === c.id && digitsOf(x.phone) === dg);
+      if (!already) addPersonFull({ name: "Telefone da empresa", companyId: c.id, phone, role: "", email: "", notes: "" });
+      patchCompanyField(c.id, { phone: "" });
+    });
   }
 
   function upsertCompanyFull(form) {
@@ -2088,7 +2108,6 @@ const COMPANY_SHEET_COLUMNS = [
   { key: "addressNumber", header: "Nº", width: 8 },
   { key: "complement", header: "Complemento", width: 20 },
   { key: "location", header: "Localização", width: 28 },
-  { key: "phone", header: "Telefone (cadastro antigo)", width: 24 },
   { key: "notes", header: "Observações", width: 36 },
   { key: "commercialSummary", header: "Resumo Comercial", width: 36 },
   { key: "lostReason", header: "Motivo da perda", width: 28 },
@@ -2216,6 +2235,9 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
   // ---------- Empresas ----------
   if (companyRows && companyRows.length) {
     const idx = columnIndex(companyRows, COMPANY_SHEET_COLUMNS);
+    // planilhas antigas tinham o telefone da empresa; hoje ele entra como um contato normal
+    const oldHeaders = companyRows[0].map((h) => normText(cell(h)));
+    const legacyPhoneIdx = oldHeaders.findIndex((h) => h === normText("Telefone (cadastro antigo)") || h === "telefone");
     if (idx.name === undefined) {
       problem("Empresas", 1, 'Coluna "Nome / Nome Fantasia" não encontrada.');
     } else {
@@ -2223,6 +2245,15 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
         const rowNum = i + 2;
         const get = (key) => (idx[key] === undefined ? "" : cell(r[idx[key]]));
         if (!COMPANY_SHEET_COLUMNS.some((col) => get(col.key))) return; // linha vazia
+
+        const legacyPhone = legacyPhoneIdx >= 0 ? String(cell(r[legacyPhoneIdx]) || "") : "";
+        const addLegacyContact = (companyId) => {
+          if (!legacyPhone) return;
+          const dg = digitsOf(legacyPhone);
+          const dup = people.some((x) => x.companyId === companyId && digitsOf(x.phone) === dg)
+            || plan.contactCreates.some((x) => x.data.companyId === companyId && digitsOf(x.data.phone) === dg);
+          if (!dup) plan.contactCreates.push({ data: { name: "Telefone da empresa", role: "", phone: legacyPhone, email: "", notes: "", companyId }, row: rowNum });
+        };
 
         const id = get("id");
         const cnpjDigits = get("cnpj").replace(/\D/g, "");
@@ -2276,6 +2307,7 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
         if (errors.length) return errors.forEach((m) => problem("Empresas", rowNum, m));
 
         if (existing) {
+          addLegacyContact(existing.id);
           const diff = {};
           const onlyDigits = (v) => (v || "").replace(/\D/g, "");
           Object.keys(patch).forEach((k) => {
@@ -2295,6 +2327,7 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
           if (op) {
             Object.assign(op.company, patch);
             op.company.address = composeAddress(op.company);
+            addLegacyContact(op.company.id);
           } else {
             const company = { ...blankCompany(uid("co"), name), ...patch, name };
             company.address = composeAddress(company);
@@ -2302,6 +2335,7 @@ function parseCompaniesWorkbook(XLSX, buffer, companies, people) {
             plan.companyCreates.push(created);
             keys.forEach((k) => newByName.set(k, created));
             nameToId.set(norm, company.id);
+            addLegacyContact(company.id);
           }
         }
       });
@@ -2645,7 +2679,7 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
             const tCount = tasks.filter((t) => t.companyId === c.id && t.status !== "Concluída" && t.status !== "Cancelada").length;
             const aCount = activities.filter((a) => a.companyId === c.id).length;
             const pCount = people.filter((p) => p.companyId === c.id).length;
-            const contact = c.contactPersonId ? people.find((p) => p.id === c.contactPersonId) : null;
+            const cardContacts = people.filter((p) => p.companyId === c.id && p.phone).slice(0, 2);
             const avatarColor = c.classification ? CLASSIFICATION_COLOR[c.classification] : "#8B93A7";
             return (
               <div key={c.id} className="entity-card" onClick={() => onSelect(c)}>
@@ -2657,7 +2691,12 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                     <div className="entity-name">{c.name}</div>
                     {(c.segment || c.city) && <div className="entity-role">{[c.segment, c.city].filter(Boolean).join(" · ")}</div>}
                   </div>
-                  <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
+
+                  <div className="inline-company-row-action">
+                    <button className="icon-btn entity-history-btn" onClick={(e) => { e.stopPropagation(); onHistory(c); }} title="Ver histórico de tarefas e atividades"><Eye size={12} /></button>
+                    <button className="icon-btn entity-edit-btn" onClick={(e) => { e.stopPropagation(); onEdit(c); }} title="Editar"><Edit2 size={12} /></button>
+                  </div>
+
                 </div>
                 {(c.entityType || c.crmStage || c.classification) && (
                   <div className="entity-crm-row">
@@ -2667,10 +2706,9 @@ function CompaniesView({ companies, tasks, activities, people, onNew, onEdit, on
                   </div>
                 )}
                 <div className="entity-stats">{tCount} tarefa(s) aberta(s) · {aCount} atividade(s) · {pCount} pessoa(s)</div>
-                {(contact || c.address || c.phone) && (
+                {(cardContacts.length > 0 || c.address) && (
                   <div className="entity-contact">
-                    {contact && <span><Users size={11} /> {contact.name}{contact.role ? ` — ${contact.role}` : ""}</span>}
-                    {c.phone && <span><Phone size={11} /> <PhoneLink phone={c.phone} /></span>}
+                    {cardContacts.map((p) => <span key={p.id}><Phone size={11} /> {p.name}: <PhoneLink phone={p.phone} /></span>)}
                     {c.address && <span><MapPin size={11} /> {c.address}</span>}
                   </div>
                 )}
@@ -3237,6 +3275,7 @@ function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
       key: "a_" + a.id, kind: "Atividade", task: null,
       date: (a.createdAt || "").split(" ")[0], sort: a.createdAt || "",
       title: a.title, desc: a.description,
+      dates: [`Registrada em ${formatTsBR(a.createdAt)}`],
       chips: [a.interactionType, person && person.name].filter(Boolean),
     });
   });
@@ -3248,6 +3287,11 @@ function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
       date: upcoming ? t.dueDate : (t.createdAt || "").split(" ")[0],
       sort: upcoming ? `${t.dueDate} ${t.dueTime || "00:00"}` : (t.createdAt || ""),
       title: t.title, desc: t.description, exec: t.completionNote, notes: t.notes,
+      dates: [
+        `Criada em ${formatTsBR(t.createdAt)}`,
+        t.dueDate && `Prazo ${formatDateBR(t.dueDate)}${t.dueTime ? " " + t.dueTime : ""}`,
+        t.completedAt && `Concluída em ${formatTsBR(t.completedAt)}`,
+      ].filter(Boolean),
       chips: [t.category, person && person.name].filter(Boolean),
     });
   });
@@ -3280,6 +3324,7 @@ function CompanyHistory({ company, tasks, activities, people, onOpenTask }) {
                 <span className="history-title">{it.title}</span>
                 {it.task && <StatusPill status={it.task.status} />}
               </div>
+              <div className="history-dates">{it.dates.join(" · ")}</div>
               {it.desc && <div className="history-desc">{it.desc}</div>}
               {it.exec && <div className="history-desc"><b>Execução:</b> {it.exec}</div>}
               {it.notes && <div className="history-desc"><b>Observações:</b> {it.notes}</div>}
@@ -3478,11 +3523,22 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
           {entity.mainActivity && <span>Atividade: {entity.mainActivity}</span>}
         </div>
       )}
-      {isCompany && (entity.phone || entity.address || entity.location) && (
+      {isCompany && (entity.address || entity.location) && (
         <div className="profile-contact-row">
-          {entity.phone && <span><Phone size={12} /> <PhoneLink phone={entity.phone} /></span>}
           {entity.address && <span><MapPin size={12} /> {entity.address}</span>}
           {entity.location && <span><a href={entity.location} target="_blank" rel="noreferrer">Ver localização</a></span>}
+        </div>
+      )}
+      {isCompany && relatedPeople.length > 0 && (
+        <div className="side-card profile-people">
+          <div className="side-card-head"><Users size={14} /> Pessoas nesta empresa</div>
+          {relatedPeople.map((p) => (
+            <div key={p.id} className="profile-contact-line">
+              <span className="gen-chip" onClick={() => onOpenRelated("person", p.id)}>{p.name}{p.role ? ` — ${p.role}` : ""}</span>
+              {p.phone && <span className="profile-contact-item"><Phone size={12} /> <PhoneLink phone={p.phone} /></span>}
+              {p.email && <span className="profile-contact-item"><Mail size={12} /> {p.email}</span>}
+            </div>
+          ))}
         </div>
       )}
       {isCompany && entity.contactPersonId && people.find((p) => p.id === entity.contactPersonId) && (
@@ -3507,19 +3563,6 @@ function EntityProfile({ target, companies, people, tasks, activities, onEdit, o
         <div className="stat-card stat-card-link tone-success" onClick={() => onOpenSection("done")} title="Ver tarefas concluídas"><div className="stat-value">{doneCount}</div><div className="stat-label">Concluídas</div></div>
         <div className="stat-card stat-card-link" onClick={() => onOpenSection("activities")} title="Ver atividades"><div className="stat-value">{entityActivities.length}</div><div className="stat-label">Atividades</div></div>
       </div>
-
-      {isCompany && relatedPeople.length > 0 && (
-        <div className="side-card profile-people">
-          <div className="side-card-head"><Users size={14} /> Pessoas nesta empresa</div>
-          <div className="profile-people-list">
-            {relatedPeople.map((p) => (
-              <div key={p.id} className="gen-chip" onClick={() => onOpenRelated("person", p.id)}>
-                {p.name}{p.role ? ` — ${p.role}` : ""}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="drawer-section-title">Tarefas em aberto</div>
       <div className="task-list">
@@ -4696,19 +4739,6 @@ function CompanyFormPage({ editing, people, onClose, onSubmit, onCreatePerson, i
             <>
               <div className="form-page-section">PESSOAS NESSA EMPRESA</div>
 
-              {editing && form.phone && (
-                <div className="legacy-phone-note">
-                  <span>Esta empresa tem um telefone no cadastro antigo: <b>{form.phone}</b></span>
-                  <button
-                    type="button" className="btn btn-ghost btn-sm"
-                    onClick={() => {
-                      setContactDrafts((d) => [...d, { name: "Telefone da empresa", role: "", phone: form.phone, email: "" }]);
-                      setForm({ ...form, phone: "" });
-                    }}
-                  >Transformar em contato</button>
-                </div>
-              )}
-
               {linkedPeople.length === 0 && contactDrafts.length === 0 && <div className="side-empty">Nenhum contato ainda. Adicione abaixo.</div>}
               {linkedPeople.map((p) => (
                 <div key={p.id} className="contact-add existing">
@@ -5035,7 +5065,7 @@ function Style() {
       .btn-danger { background: var(--danger); color: #fff; }
       .btn-danger:hover { background: #C23B3B; }
       .btn-sm { padding: 5px 9px; font-size: 11.5px; }
-      .icon-btn { border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 5px 6px; cursor: pointer; color: var(--ink-soft); display: flex; }
+      .icon-btn { border: 1px solid var(--border); background: #357beb; border-radius: 6px; padding: 5px 6px; cursor: pointer; display: flex; }
       .icon-btn:hover { background: var(--bg); color: var(--ink); }
       .icon-btn.danger:hover { background: #FCE9E9; color: var(--danger); border-color: #F3C6C6; }
 
@@ -5157,7 +5187,9 @@ function Style() {
       .entity-card-head .entity-name { margin-bottom: 0; }
       .entity-card-headtext { flex: 1; min-width: 0; }
       .entity-avatar { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 14px; flex-shrink: 0; }
-      .entity-edit-btn { opacity: 0; flex-shrink: 0; margin-left: auto; }
+      .entity-history-btn { flex-shrink: 0; margin-left: auto; background: #7CB518; border-color: #7CB518; color: #fff; }
+      .entity-history-btn + .entity-edit-btn { margin-left: 4px; }
+      .entity-edit-btn { flex-shrink: 0; margin-left: auto; }
       .entity-card:hover .entity-edit-btn { opacity: 1; }
 
       /* Formulário de empresa em página cheia */
@@ -5177,6 +5209,9 @@ function Style() {
       .contact-row svg { cursor: pointer; color: var(--ink-soft); }
       .contact-add { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.4fr auto; gap: 10px; margin-top: 10px; align-items: center; }
       .contact-add.existing { margin-top: 0; margin-bottom: 8px; }
+      .profile-contact-line { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 7px 0; border-top: 1px solid var(--border); }
+      .profile-contact-line:first-of-type { border-top: none; }
+      .profile-contact-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--ink-soft); }
       .legacy-phone-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--brand-blue-soft); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12.5px; }
       .contact-add input { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; }
       @media (max-width: 860px) {
@@ -5199,6 +5234,7 @@ function Style() {
       .company-row-text { font-size: 13px; line-height: 1.45; }
       .company-row-desc { margin-top: 3px; font-size: 12.5px; line-height: 1.45; color: var(--ink-soft); white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
       .company-row-kind { color: var(--ink-soft); font-size: 11.5px; }
+      .inline-company-row-action { display: flex; }
       .company-row-actions { display: flex; gap: 6px; }
       .row-action { border: none; border-radius: 8px; width: 42px; height: 34px; display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
       .row-action.edit { background: #2F6FD6; }
@@ -5238,6 +5274,7 @@ function Style() {
       .history-kind { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
       .history-kind.task { background: var(--accent-soft); color: var(--accent); }
       .history-kind.activity { background: var(--brand-blue-soft); color: var(--brand-blue); }
+      .history-dates { margin-top: 2px; font-size: 11.5px; color: var(--ink-soft); }
       .history-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink); white-space: pre-line; }
       @media (max-width: 860px) { .history-item { grid-template-columns: 1fr; gap: 4px; } }
       .input-with-btn { display: flex; gap: 6px; }

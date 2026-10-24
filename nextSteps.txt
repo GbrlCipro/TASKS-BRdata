@@ -1,9 +1,15 @@
-- Dentro de EMPRESAS: O contato some da tela de informações da empresa quando transformo o contato antigo em contato normal...
-
-- Gostaria que eliminasse o recurso "Numero de telefone antigo", e deixássemos todos os contatos no lugar de contatos normais mesmo (e mantem o link pra abrir whatsapp);
-
 - Em Contatos, é legal que criemos uma lista com o que a pessoa é na empresa (Proprietário(a), Colaborador, Indicador, etc etc etc);
 
-- Colocar o olho verde dentro da tela de empresa ao lado do lápis;
 
-- 
+
+- Na seção de estilos de App.jsx, estas foram as alterações desde o último commit:
+
+App.jsx:5068, .icon-btn: o fundo mudou de var(--panel) para #357beb; a cor padrão do texto/ícone (var(--ink-soft)) foi removida.
+App.jsx:5190, .entity-history-btn: nova regra para o botão de histórico, com fundo e borda verdes (#7CB518), texto branco e sem encolhimento.
+App.jsx:5191, .entity-history-btn + .entity-edit-btn: nova margem de 4px entre os botões de histórico e edição.
+App.jsx:5192, .entity-edit-btn: foi removido opacity: 0; o botão não fica mais oculto por padrão.
+App.jsx:5212, .profile-contact-line: novo estilo para organizar cada contato do perfil em linha flexível, com espaçamento, quebra de linha, preenchimento e divisória superior.
+App.jsx:5213, .profile-contact-line:first-of-type: remove a divisória do primeiro contato.
+App.jsx:5214, .profile-contact-item: novo estilo para alinhar ícone e informação de telefone/e-mail e definir tamanho e cor do texto.
+App.jsx:5237, .inline-company-row-action: nova regra flex para agrupar as ações do cartão de empresa.
+App.jsx:5277, .history-dates: novo estilo para as datas do histórico, com margem superior, fonte menor e cor secundária.
